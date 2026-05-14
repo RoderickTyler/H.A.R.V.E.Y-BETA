@@ -452,12 +452,12 @@ const SHEET_URLS = {
   townstreets:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=townstreets`
 };
 
-// ── SERVER-SIDE TTS CONFIG ──
-// Uses local Python backend running bm_george voice
-// Endpoint: http://127.0.0.1:5000/tts
+// ── HARVEY VOICE SYSTEM ──
+const TTS_SERVER = 'http://127.0.0.1:5000/tts';
 
 let currentAudio = null;
-const TTS_SERVER = 'http://127.0.0.1:5000/tts';
+let recognition = null;
+let listening = false;
 
 const DB = { resale:[], townStreets:{}, loaded:false };
 let loading=false, qn=0, voiceOn=true;
@@ -469,24 +469,40 @@ const sbEl   = document.getElementById('sb');
 
 // Load Kokoro in background — show progress in db-status indicator
 async function loadKokoro(){
-  // Backend handles TTS now
   document.getElementById('db-status').textContent='READY';
   document.getElementById('db-status').style.color='var(--g)';
 }
 
 // ── SPEAK ──
 async function speak(txt){
+
   if(!voiceOn || !txt) return;
 
-  const clean = cleanForSpeech ? cleanForSpeech(txt) : txt;
+  const clean = txt
+    .replace(/[*#`]/g,'')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,180);
+
   if(!clean) return;
 
   stopSpeech();
 
   document.querySelector('.hrw')?.classList.add('speaking');
-  document.getElementById('harvey-speaking-fx')?.classList.add('active');
+  document.getElementById('harvey-speaking-fx')
+    ?.classList.add('active');
 
   try{
+
+    const ack = new SpeechSynthesisUtterance(
+      'Analyzing housing transaction data'
+    );
+
+    ack.rate = 1.1;
+    ack.pitch = 0.9;
+
+    speechSynthesis.speak(ack);
+
     const res = await fetch(TTS_SERVER,{
       method:'POST',
       headers:{
@@ -498,27 +514,125 @@ async function speak(txt){
     });
 
     const blob = await res.blob();
+
     const url = URL.createObjectURL(blob);
 
     const audio = new Audio(url);
+
     currentAudio = audio;
 
     audio.onended = ()=>{
-      document.querySelector('.hrw')?.classList.remove('speaking');
-      document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+      document.querySelector('.hrw')
+        ?.classList.remove('speaking');
+
+      document.getElementById('harvey-speaking-fx')
+        ?.classList.remove('active');
+
       currentAudio = null;
+
       URL.revokeObjectURL(url);
     };
 
     await audio.play();
 
   }catch(err){
-    console.error('TTS ERROR:', err);
 
-    document.querySelector('.hrw')?.classList.remove('speaking');
-    document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+    console.error('VOICE ERROR:',err);
+
+    const fallback =
+      new SpeechSynthesisUtterance(clean);
+
+    fallback.rate = 1.05;
+    fallback.pitch = 0.9;
+
+    speechSynthesis.speak(fallback);
+
+    document.querySelector('.hrw')
+      ?.classList.remove('speaking');
+
+    document.getElementById('harvey-speaking-fx')
+      ?.classList.remove('active');
   }
 }
+
+
+// ── MICROPHONE RECOGNITION ──
+function initVoiceRecognition(){
+
+  const SpeechRecognition =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+  if(!SpeechRecognition){
+    alert('Speech recognition not supported. Use Chrome.');
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+
+  recognition.continuous = false;
+  recognition.lang = 'en-SG';
+  recognition.interimResults = false;
+
+  recognition.onstart = ()=>{
+
+    listening = true;
+
+    document.getElementById('mb')
+      ?.classList.add('active');
+
+    document.getElementById('vs-bar')
+      .style.display = 'flex';
+
+    document.getElementById('vs-txt')
+      .textContent = 'HARVEY LISTENING...';
+  };
+
+  recognition.onend = ()=>{
+
+    listening = false;
+
+    document.getElementById('mb')
+      ?.classList.remove('active');
+
+    document.getElementById('vs-bar')
+      .style.display = 'none';
+  };
+
+  recognition.onresult = (event)=>{
+
+    const text =
+      event.results[0][0].transcript;
+
+    ciEl.value = text;
+
+    handleInput();
+  };
+
+  recognition.onerror = (event)=>{
+
+    console.error(event);
+
+    document.getElementById('vs-txt')
+      .textContent = 'MIC ERROR';
+  };
+}
+
+function toggleMic(){
+
+  if(!recognition){
+    initVoiceRecognition();
+  }
+
+  if(!recognition) return;
+
+  if(listening){
+    recognition.stop();
+  }else{
+    recognition.start();
+  }
+}
+
 
 // ── CLOCK ──
 function tick(){
