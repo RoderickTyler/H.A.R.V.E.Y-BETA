@@ -644,12 +644,16 @@ async function speak(txt){
 
   // Fallback: browser TTS — always works, no crash risk
   const u=new SpeechSynthesisUtterance(clean);
-  u.rate=IS_MOBILE?1.1:VOICE_SPEED; // slightly slower on mobile for clarity
+  u.rate=IS_MOBILE?1.1:VOICE_SPEED;
   u.pitch=0.75;u.volume=0.9;
-  // Best available male voice priority
+  // Best available male voice — Daniel is the closest to Jarvis on most platforms
   const vv=window.speechSynthesis.getVoices();
   const pick=
-    vv.find(v=>/daniel|george|oliver|arthur/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/^daniel$/i.test(v.name))||                          // macOS/iOS Daniel — best
+    vv.find(v=>/daniel/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/george/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/arthur/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/oliver/i.test(v.name)&&/en/i.test(v.lang))||
     vv.find(v=>/male/i.test(v.name)&&/en/i.test(v.lang))||
     vv.find(v=>/en-GB/i.test(v.lang))||
     vv.find(v=>/en/i.test(v.lang))||null;
@@ -1454,6 +1458,7 @@ async function runEvExpanded(p,labels){
   const prices=comps.map(r=>Number(r.resale_price));
   const sorted=[...prices].sort((a,b)=>a-b);
   const median=sorted[Math.floor(sorted.length/2)];
+  const avg=Math.round(prices.reduce((s,p)=>s+p,0)/prices.length);
   const low=Math.round(median*0.95/1000)*1000;
   const high=Math.round(median*1.05/1000)*1000;
 
@@ -1543,6 +1548,7 @@ function showTransactions(recs,params,is6mo){
   const prices=recs.map(r=>Number(r.resale_price));
   const sorted=[...prices].sort((a,b)=>a-b);
   const median=sorted[Math.floor(sorted.length/2)];
+  const avg=Math.round(prices.reduce((s,p)=>s+p,0)/prices.length);
   const shown=recs; // show ALL — no limit
   const timeNote=is6mo?'last 6 months':'full dataset';
   const rows=shown.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
@@ -1553,7 +1559,8 @@ function showTransactions(recs,params,is6mo){
       <div class="rh"><span class="rtitle">⬡ ${esc([(params.block?'BLK '+params.block:''),(params.street||''),(params.town||''),(params.flatType||'')].filter(Boolean).join(' · ').toUpperCase())}</span><span class="rcnt">${recs.length} RECORDS · ${timeNote.toUpperCase()}</span></div>
       <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
-    <div class="srow">
+    <div class="srow" style="grid-template-columns:repeat(4,1fr)">
+      <div class="sc"><span class="svv">${fmtP(avg)}</span><span class="sll">AVG</span></div>
       <div class="sc"><span class="svv">${fmtP(median)}</span><span class="sll">MEDIAN</span></div>
       <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
       <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
@@ -1700,8 +1707,16 @@ function showEV(result,params){
   </div>`;
   msgsEl.appendChild(d);bot();
 
-  // Harvey speaks naturally
-  const speechLine=`Block ${result.block}, ${result.street}, floor ${result.floor}. Sir, I see transactions ranging from ${fmtP(result.priceLow)} to ${fmtP(result.priceHigh)}. Your unit's value should sit around ${fmtP(result.adjusted)} based on my calculation.`;
+  // Read it out clearly — numbers expanded for TTS, no dollar signs
+  const adjK=Math.round(result.adjusted/1000);
+  const lowK=Math.round(result.priceLow/1000);
+  const hiK=Math.round(result.priceHigh/1000);
+  const floorPremK=Math.round(result.floorPrem/1000);
+  const speechLine=`Block ${result.block}, ${cleanForSpeech(result.street)}, floor ${result.floor}, ${cleanForSpeech(result.flatType)}.`
+    +` Based on my calculations, sir, your unit's estimated value is ${adjK} thousand dollars.`
+    +` I see transactions ranging from ${lowK} thousand to ${hiK} thousand dollars on this ${result.fallbackLevel==='street'?'street':'block'}.`
+    +(result.floorPrem>500?` I've applied a floor premium of approximately ${floorPremK} thousand dollars per level.`:'')
+    +(result.lookbackUsed===12?' Please note this is based on 12 months of data as recent transactions were limited.':'');
   speak(speechLine);
   if(inversionSpoken){setTimeout(()=>speak(inversionSpoken),3500);}
 
@@ -2045,13 +2060,11 @@ async function handleStreetOnly(street, ctx){
     loading=false;sbEl.disabled=false;mode='srch_waiting';return;
   }
 
-  // Try 6 months first, then 12 months
-  const cut6=evCutoff(6);
+  // 1 year max for street data — sufficient for user support
   const cut12=evCutoff(12);
-  const recs6=DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut6);
-  const recs12=recs6.length>0?recs6:DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut12);
-  const timeLabel=recs6.length>0?'6 months':'12 months';
-  const recs=recs12.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+  const recs=DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut12)
+    .sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+  const timeLabel='1 year';
 
   // Get blocks available in this street
   const allBlocks=[...new Set(DB.resale.filter(r=>r.street_name===found.street).map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b));
@@ -2094,7 +2107,8 @@ async function handleStreetOnly(street, ctx){
         </div>
         <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
       </div>
-      <div class="srow">
+      <div class="srow" style="grid-template-columns:repeat(4,1fr)">
+        <div class="sc"><span class="svv">${fmtP(avg)}</span><span class="sll">AVG</span></div>
         <div class="sc"><span class="svv">${fmtP(median)}</span><span class="sll">MEDIAN</span></div>
         <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
         <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
@@ -2307,6 +2321,7 @@ async function handleInput(){
     }
     const prices=streetRecs.map(r=>Number(r.resale_price));
     const median=[...prices].sort((a,b)=>a-b)[Math.floor(prices.length/2)];
+  const avg=Math.round(prices.reduce((s,p)=>s+p,0)/prices.length);
     const rows=streetRecs.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
     const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
     d.innerHTML=`<span class="mlbl">// ${streetRecs.length} TRANSACTIONS · ${esc(label)}</span>
@@ -2315,7 +2330,8 @@ async function handleInput(){
         <div class="rh"><span class="rtitle">⬡ ${esc(label)}</span><span class="rcnt">${streetRecs.length} RECORDS · ALL TIME</span></div>
         <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
       </div>
-      <div class="srow">
+      <div class="srow" style="grid-template-columns:repeat(4,1fr)">
+        <div class="sc"><span class="svv">${fmtP(avg)}</span><span class="sll">AVG</span></div>
         <div class="sc"><span class="svv">${fmtP(median)}</span><span class="sll">MEDIAN</span></div>
         <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
         <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
@@ -2328,6 +2344,80 @@ async function handleInput(){
       ...(flatTypeFilter?[{label:`ALL TYPES ON ${streetShort}…`,val:`recent all blocks ${canonicalStreet}`}]:[]),
       {label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH AGAIN',val:'search'}
     ]),1200);
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── Singapore-wide cheapest / most expensive search ──
+  const isLowest  = /\b(lowest|cheapest|most affordable|cheapest price|lowest price|lowest priced|cheap)\b/i.test(raw);
+  const isHighest = /\b(highest|most expensive|priciest|highest price|highest priced)\b/i.test(raw);
+  const isSgWide  = isLowest||isHighest;
+
+  if(isSgWide){
+    const norm2=normalizeSpeech(raw);
+    const p2=parseQuery(norm2);
+    const flatFilter=p2.flatType||null;
+    const topN=10;
+    const cutoff12=evCutoff(12);
+
+    let pool=DB.resale.filter(r=>r.month>=cutoff12);
+    if(flatFilter) pool=pool.filter(r=>r.flat_type===flatFilter);
+
+    pool.sort((a,b)=>isLowest
+      ?Number(a.resale_price)-Number(b.resale_price)
+      :Number(b.resale_price)-Number(a.resale_price));
+
+    const top=pool.slice(0,topN);
+    if(!top.length){
+      harveyMsg(`No results found, sir. Try a different flat type.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+
+    const label=isLowest?`LOWEST PRICED${flatFilter?' '+flatFilter:''}`:
+                         `HIGHEST PRICED${flatFilter?' '+flatFilter:''}`;
+    const prices=top.map(r=>Number(r.resale_price));
+    const rows=top.map((r,i)=>`<tr>
+      <td style="font-family:var(--mono);color:var(--t3);font-size:10px">${i+1}</td>
+      <td>${esc(r.month)}</td>
+      <td>BLK ${esc(r.block)} ${esc(r.street_name)}</td>
+      <td>${esc(r.town)}</td>
+      <td>${esc(r.flat_type)}</td>
+      <td>${esc(r.storey_range)}</td>
+      <td>${esc(r.floor_area_sqm)}m²</td>
+      <td class="pc">${fmtP(r.resale_price)}</td>
+    </tr>`).join('');
+
+    document.getElementById('welcome')?.remove();
+    userMsg(raw);
+    const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+    d.innerHTML=`<span class="mlbl">// SINGAPORE · ${esc(label)} · LAST 12 MONTHS</span>
+      <div class="mbub">Here are the <strong>${topN}</strong> ${isLowest?'most affordable':'highest priced'}${flatFilter?' <strong>'+flatFilter.toLowerCase()+'</strong>':''} flats transacted in Singapore over the last year, sir.</div>
+      <div class="rwrap"><div class="rcard">
+        <div class="rh">
+          <span class="rtitle">⬡ ${esc(label)} · SINGAPORE-WIDE</span>
+          <span class="rcnt">TOP ${topN} · LAST 12 MONTHS</span>
+        </div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>#</th><th>MONTH</th><th>BLOCK & STREET</th><th>TOWN</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+      </div>
+      <div class="srow" style="grid-template-columns:repeat(4,1fr)">
+        <div class="sc"><span class="svv">${fmtP(Math.round(prices.reduce((s,p)=>s+p,0)/prices.length))}</span><span class="sll">AVG</span></div>
+        <div class="sc"><span class="svv">${fmtP(prices.slice().sort((a,b)=>a-b)[Math.floor(prices.length/2)])}</span><span class="sll">MEDIAN</span></div>
+        <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
+        <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
+      </div></div>`;
+    msgsEl.appendChild(d);bot();
+
+    const voiceTop=isLowest
+      ?`The most affordable${flatFilter?' '+flatFilter.toLowerCase():''} flat in Singapore over the last year transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir — Block ${top[0].block} in ${top[0].town}.`
+      :`The most expensive${flatFilter?' '+flatFilter.toLowerCase():''} flat in Singapore over the last year went for ${Math.round(prices[0]/1000)} thousand dollars, sir — Block ${top[0].block} in ${top[0].town}.`;
+    speak(voiceTop);
+    setTimeout(()=>harveyMsg('Anything else, sir?',[
+      {label:'ESTIMATE A UNIT',val:'estimate value'},
+      ...(flatFilter?[{label:`ALL ${flatFilter} PRICES`,val:`recent ${flatFilter}`}]:[]),
+      {label:'SEARCH BY TOWN',val:'search'}
+    ]),1400);
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
