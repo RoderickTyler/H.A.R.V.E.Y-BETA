@@ -2185,6 +2185,74 @@ async function handleInput(){
       speak(`I'm afraid the data presents itself as such, sir. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
       loading=false;sbEl.disabled=false;return;
     }
+
+    // ── Context-aware fallback: figure out what was being asked and map raw input ──
+    // Determine the FIRST missing field in current ctx to know what user is answering
+    const missingFields=[];
+    if(!ctx.block)    missingFields.push('block');
+    if(!ctx.street)   missingFields.push('street');
+    if(!ctx.floor)    missingFields.push('floor');
+    if(!ctx.flatType) missingFields.push('flatType');
+    if(!ctx.size&&!ctx.flatType) missingFields.push('size');
+    if(!ctx.leaseYear)missingFields.push('leaseYear');
+    const nextMissing=missingFields[0]; // what Harvey was most likely asking about
+
+    // If parser found nothing at all, try to infer from context
+    if(!hasNewInfo){
+      const numOnly=raw.trim().match(/^(\d{1,4}[A-Z]?)$/i); // bare number e.g. "158" or "4A"
+      const yearOnly=raw.trim().match(/^(19|20)\d{2}$/);    // bare year e.g. "1979"
+      if(numOnly){
+        const n=numOnly[1].toUpperCase();
+        const nInt=parseInt(n);
+        if(nextMissing==='block'){
+          ctx.block=n;
+          harveyMsg(`Got it — <strong style="color:var(--c)">Block ${n}</strong>, sir.`);
+        } else if(nextMissing==='floor'||(!nextMissing&&nInt>=1&&nInt<=55)){
+          ctx.floor=nInt;
+          harveyMsg(`Got it — <strong style="color:var(--c)">Floor ${nInt}</strong>, sir.`);
+        } else if(nextMissing==='size'||(nInt>=30&&nInt<=200)){
+          ctx.size=nInt;ctx.sizeInferred=false;ctx.sizeFromDB=false;
+          harveyMsg(`Got it — <strong style="color:var(--c)">${nInt} sqm</strong>, sir.`);
+        } else if(nextMissing==='leaseYear'||(nInt>=1960&&nInt<=2010)){
+          ctx.leaseYear=nInt;
+          harveyMsg(`Got it — <strong style="color:var(--c)">Lease ${nInt}</strong>, sir.`);
+        } else {
+          // Ambiguous number — tell user what to prefix
+          const hint=nextMissing==='block'?`Try <strong style="color:var(--c)">block ${n}</strong>`
+            :nextMissing==='floor'?`Try <strong style="color:var(--c)">floor ${n}</strong>`
+            :nextMissing==='size'?`Try <strong style="color:var(--c)">${n} sqm</strong>`
+            :nextMissing==='leaseYear'?`Try <strong style="color:var(--c)">lease ${n}</strong>`
+            :`Try prefixing it — e.g. <strong style="color:var(--c)">block ${n}</strong> or <strong style="color:var(--c)">floor ${n}</strong>`;
+          harveyMsg(`I couldn't quite place <strong>${esc(raw)}</strong>, sir. ${hint} so I know which field it belongs to.`);
+          speak(`I couldn't place that, sir. Could you try prefixing it — for example, ${nextMissing||'block'} ${n}?`);
+          loading=false;sbEl.disabled=false;return;
+        }
+      } else if(yearOnly){
+        ctx.leaseYear=parseInt(yearOnly[1]);
+        harveyMsg(`Got it — <strong style="color:var(--c)">Lease year ${ctx.leaseYear}</strong>, sir.`);
+      } else {
+        // Totally unrecognisable — tell them what's still missing and HOW to format it
+        const fieldName=nextMissing==='block'?'block number'
+          :nextMissing==='floor'?'floor level'
+          :nextMissing==='flatType'?'flat type'
+          :nextMissing==='street'?'street name'
+          :nextMissing==='size'?'floor area in sqm'
+          :nextMissing==='leaseYear'?'lease year'
+          :'details';
+        const example=nextMissing==='block'?'e.g. <strong style="color:var(--c)">block 158</strong>'
+          :nextMissing==='floor'?'e.g. <strong style="color:var(--c)">floor 8</strong>'
+          :nextMissing==='flatType'?'e.g. <strong style="color:var(--c)">4-room</strong>'
+          :nextMissing==='street'?'e.g. <strong style="color:var(--c)">Clementi West St 1</strong>'
+          :nextMissing==='size'?'e.g. <strong style="color:var(--c)">93 sqm</strong>'
+          :nextMissing==='leaseYear'?'e.g. <strong style="color:var(--c)">lease 1979</strong>'
+          :'';
+        harveyMsg(`I couldn't find the ${fieldName} from that, sir — ${example}.`);
+        speak(`I couldn't find the ${fieldName} from that, sir.`);
+        loading=false;sbEl.disabled=false;return;
+      }
+    }
+
+    // Merge parsed fields normally
     if(parsed.town)     ctx.town=parsed.town;
     if(parsed.flatType) ctx.flatType=parsed.flatType;
     if(parsed.street)   ctx.street=parsed.street;
