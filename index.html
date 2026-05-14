@@ -567,16 +567,48 @@ const SHEET_URLS = {
   townstreets:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=townstreets`
 };
 
-// ── TTS ENGINE ──
-// Kokoro (85MB WASM model) only on desktop — mobile gets browser TTS to avoid crash
+// ── TTS ENGINE — Browser native Daniel voice, no downloads, no crashes ──
 const IS_MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
-const KOKORO_VOICE = 'bm_george';
-const VOICE_SPEED  = 1.275;
+const VOICE_SPEED = 1.275;
 
-let kokoroTTS    = null;
-let kokoroReady  = false;
-let kokoroLoading= false;
 let currentAudio = null;
+let harveyVoice  = null;
+
+// Pick the best available voice — Daniel priority
+function pickVoice(){
+  const vv=window.speechSynthesis.getVoices();
+  harveyVoice=
+    vv.find(v=>/^daniel$/i.test(v.name))||
+    vv.find(v=>/daniel/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/george/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/arthur/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/oliver/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/male/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/en-GB/i.test(v.lang))||
+    vv.find(v=>/en/i.test(v.lang))||null;
+}
+pickVoice();
+// Voices load async on some browsers
+if(window.speechSynthesis.onvoiceschanged!==undefined)
+  window.speechSynthesis.onvoiceschanged=pickVoice;
+
+async function speak(txt){
+  if(!voiceOn||!txt)return;
+  const clean=cleanForSpeech(txt);
+  if(!clean)return;
+  stopSpeech();
+  document.querySelector('.hrw')?.classList.add('speaking');
+  document.getElementById('harvey-speaking-fx')?.classList.add('active');
+  const u=new SpeechSynthesisUtterance(clean);
+  u.rate=IS_MOBILE?1.1:VOICE_SPEED;
+  u.pitch=0.75;u.volume=0.9;
+  if(harveyVoice)u.voice=harveyVoice;
+  u.onend=()=>{
+    document.querySelector('.hrw')?.classList.remove('speaking');
+    document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+  };
+  window.speechSynthesis.speak(u);
+}
 
 const DB = { resale:[], townStreets:{}, loaded:false };
 let loading=false, qn=0, voiceOn=true;
@@ -585,85 +617,6 @@ let mode='boot', ctx={};
 const msgsEl = document.getElementById('msgs');
 const ciEl   = document.getElementById('ci');
 const sbEl   = document.getElementById('sb');
-
-// Load Kokoro in background — show progress in db-status indicator
-async function loadKokoro(){
-  if(IS_MOBILE)return; // never load on mobile — too heavy, crashes browser
-  if(kokoroReady||kokoroLoading)return;
-  kokoroLoading=true;
-  try{
-    // Load via ESM from jsDelivr CDN — no npm/build needed
-    const {KokoroTTS}=await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm');
-    document.getElementById('db-status').textContent='VOICE...';
-    kokoroTTS=await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{
-      dtype:'q8',
-      device:'wasm',
-    });
-    kokoroReady=true;
-    kokoroLoading=false;
-    document.getElementById('db-status').textContent='READY';
-    document.getElementById('db-status').style.color='var(--g)';
-  }catch(e){
-    kokoroLoading=false;
-    console.warn('Kokoro load failed, will use browser TTS fallback',e);
-    // Fallback is fine — browser TTS always works
-  }
-}
-
-// ── SPEAK ──
-async function speak(txt){
-  if(!voiceOn||!txt)return;
-  const clean=cleanForSpeech(txt);
-  if(!clean)return;
-  // Stop any current speech
-  stopSpeech();
-  document.querySelector('.hrw')?.classList.add('speaking');
-  document.getElementById('harvey-speaking-fx')?.classList.add('active');
-
-  if(kokoroReady&&kokoroTTS){
-    try{
-      const audio=await kokoroTTS.generate(clean,{voice:KOKORO_VOICE,speed:VOICE_SPEED});
-      // Convert to playable audio
-      const wav=audio.toWav();
-      const blob=new Blob([wav],{type:'audio/wav'});
-      const url=URL.createObjectURL(blob);
-      const el=new Audio(url);
-      currentAudio=el;
-      el.onended=()=>{
-        document.querySelector('.hrw')?.classList.remove('speaking');
-        document.getElementById('harvey-speaking-fx')?.classList.remove('active');
-        currentAudio=null;
-        URL.revokeObjectURL(url);
-      };
-      el.play();
-      return;
-    }catch(e){
-      console.warn('Kokoro speak error, falling back',e);
-    }
-  }
-
-  // Fallback: browser TTS — always works, no crash risk
-  const u=new SpeechSynthesisUtterance(clean);
-  u.rate=IS_MOBILE?1.1:VOICE_SPEED;
-  u.pitch=0.75;u.volume=0.9;
-  // Best available male voice — Daniel is the closest to Jarvis on most platforms
-  const vv=window.speechSynthesis.getVoices();
-  const pick=
-    vv.find(v=>/^daniel$/i.test(v.name))||                          // macOS/iOS Daniel — best
-    vv.find(v=>/daniel/i.test(v.name)&&/en/i.test(v.lang))||
-    vv.find(v=>/george/i.test(v.name)&&/en/i.test(v.lang))||
-    vv.find(v=>/arthur/i.test(v.name)&&/en/i.test(v.lang))||
-    vv.find(v=>/oliver/i.test(v.name)&&/en/i.test(v.lang))||
-    vv.find(v=>/male/i.test(v.name)&&/en/i.test(v.lang))||
-    vv.find(v=>/en-GB/i.test(v.lang))||
-    vv.find(v=>/en/i.test(v.lang))||null;
-  if(pick)u.voice=pick;
-  u.onend=()=>{
-    document.querySelector('.hrw')?.classList.remove('speaking');
-    document.getElementById('harvey-speaking-fx')?.classList.remove('active');
-  };
-  window.speechSynthesis.speak(u);
-}
 
 // ── CLOCK ──
 function tick(){
@@ -2737,8 +2690,7 @@ setInterval(()=>{
 
 // ── BOOT ──
 window.addEventListener('load',async()=>{
-  // Start loading Kokoro only on desktop (mobile skips — too heavy)
-  if(!IS_MOBILE) loadKokoro();
+  // Data loads on boot
   setTimeout(()=>{
     document.getElementById('welcome')?.remove();
     const boot=document.createElement('div');boot.className='msg-ai';
