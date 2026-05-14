@@ -452,12 +452,16 @@ const SHEET_URLS = {
   townstreets:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=townstreets`
 };
 
-// ── HARVEY VOICE SYSTEM ──
-const TTS_SERVER = 'http://127.0.0.1:5000/tts';
+// ── KOKORO TTS — 100% local, no API key, no credits, runs in browser ──
+// Voice: bm_george (British male, authoritative — closest to Jarvis)
+// Model downloads once (~85MB for q8), then cached in browser forever
+const KOKORO_VOICE = 'bm_george';
+const VOICE_SPEED  = 1.275; // 1.5 × 0.85
 
+let kokoroTTS   = null;   // loaded lazily on first speak
+let kokoroReady = false;
+let kokoroLoading = false;
 let currentAudio = null;
-let recognition = null;
-let listening = false;
 
 const DB = { resale:[], townStreets:{}, loaded:false };
 let loading=false, qn=0, voiceOn=true;
@@ -469,170 +473,72 @@ const sbEl   = document.getElementById('sb');
 
 // Load Kokoro in background — show progress in db-status indicator
 async function loadKokoro(){
-  document.getElementById('db-status').textContent='READY';
-  document.getElementById('db-status').style.color='var(--g)';
+  if(kokoroReady||kokoroLoading)return;
+  kokoroLoading=true;
+  try{
+    // Load via ESM from jsDelivr CDN — no npm/build needed
+    const {KokoroTTS}=await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm');
+    document.getElementById('db-status').textContent='VOICE...';
+    kokoroTTS=await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{
+      dtype:'q8',       // ~85MB — good quality, fast
+      device:'wasm',    // works on all browsers, no WebGPU needed
+    });
+    kokoroReady=true;
+    kokoroLoading=false;
+    document.getElementById('db-status').textContent='READY';
+    document.getElementById('db-status').style.color='var(--g)';
+  }catch(e){
+    kokoroLoading=false;
+    console.warn('Kokoro load failed, will use browser TTS fallback',e);
+    // Fallback is fine — browser TTS always works
+  }
 }
 
 // ── SPEAK ──
 async function speak(txt){
-
-  if(!voiceOn || !txt) return;
-
-  const clean = txt
-    .replace(/[*#`]/g,'')
-    .replace(/\s+/g,' ')
-    .trim()
-    .slice(0,180);
-
-  if(!clean) return;
-
+  if(!voiceOn||!txt)return;
+  const clean=cleanForSpeech(txt);
+  if(!clean)return;
+  // Stop any current speech
   stopSpeech();
-
   document.querySelector('.hrw')?.classList.add('speaking');
-  document.getElementById('harvey-speaking-fx')
-    ?.classList.add('active');
+  document.getElementById('harvey-speaking-fx')?.classList.add('active');
 
-  try{
-
-    const ack = new SpeechSynthesisUtterance(
-      'Analyzing housing transaction data'
-    );
-
-    ack.rate = 1.1;
-    ack.pitch = 0.9;
-
-    speechSynthesis.speak(ack);
-
-    const res = await fetch(TTS_SERVER,{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json'
-      },
-      body:JSON.stringify({
-        text: clean
-      })
-    });
-
-    const blob = await res.blob();
-
-    const url = URL.createObjectURL(blob);
-
-    const audio = new Audio(url);
-
-    currentAudio = audio;
-
-    audio.onended = ()=>{
-      document.querySelector('.hrw')
-        ?.classList.remove('speaking');
-
-      document.getElementById('harvey-speaking-fx')
-        ?.classList.remove('active');
-
-      currentAudio = null;
-
-      URL.revokeObjectURL(url);
-    };
-
-    await audio.play();
-
-  }catch(err){
-
-    console.error('VOICE ERROR:',err);
-
-    const fallback =
-      new SpeechSynthesisUtterance(clean);
-
-    fallback.rate = 1.05;
-    fallback.pitch = 0.9;
-
-    speechSynthesis.speak(fallback);
-
-    document.querySelector('.hrw')
-      ?.classList.remove('speaking');
-
-    document.getElementById('harvey-speaking-fx')
-      ?.classList.remove('active');
+  if(kokoroReady&&kokoroTTS){
+    try{
+      const audio=await kokoroTTS.generate(clean,{voice:KOKORO_VOICE,speed:VOICE_SPEED});
+      // Convert to playable audio
+      const wav=audio.toWav();
+      const blob=new Blob([wav],{type:'audio/wav'});
+      const url=URL.createObjectURL(blob);
+      const el=new Audio(url);
+      currentAudio=el;
+      el.onended=()=>{
+        document.querySelector('.hrw')?.classList.remove('speaking');
+        document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+        currentAudio=null;
+        URL.revokeObjectURL(url);
+      };
+      el.play();
+      return;
+    }catch(e){
+      console.warn('Kokoro speak error, falling back',e);
+    }
   }
+
+  // Fallback: browser TTS (always works, no quality guarantee)
+  const u=new SpeechSynthesisUtterance(clean);
+  u.rate=VOICE_SPEED;u.pitch=0.75;u.volume=0.9;
+  // Try to pick a decent male British voice
+  const voices=window.speechSynthesis.getVoices();
+  const brit=voices.find(v=>v.name.includes('George')||v.name.includes('Daniel')||v.name.includes('UK English Male'));
+  if(brit)u.voice=brit;
+  u.onend=()=>{
+    document.querySelector('.hrw')?.classList.remove('speaking');
+    document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+  };
+  window.speechSynthesis.speak(u);
 }
-
-
-// ── MICROPHONE RECOGNITION ──
-function initVoiceRecognition(){
-
-  const SpeechRecognition =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition;
-
-  if(!SpeechRecognition){
-    alert('Speech recognition not supported. Use Chrome.');
-    return;
-  }
-
-  recognition = new SpeechRecognition();
-
-  recognition.continuous = false;
-  recognition.lang = 'en-SG';
-  recognition.interimResults = false;
-
-  recognition.onstart = ()=>{
-
-    listening = true;
-
-    document.getElementById('mb')
-      ?.classList.add('active');
-
-    document.getElementById('vs-bar')
-      .style.display = 'flex';
-
-    document.getElementById('vs-txt')
-      .textContent = 'HARVEY LISTENING...';
-  };
-
-  recognition.onend = ()=>{
-
-    listening = false;
-
-    document.getElementById('mb')
-      ?.classList.remove('active');
-
-    document.getElementById('vs-bar')
-      .style.display = 'none';
-  };
-
-  recognition.onresult = (event)=>{
-
-    const text =
-      event.results[0][0].transcript;
-
-    ciEl.value = text;
-
-    handleInput();
-  };
-
-  recognition.onerror = (event)=>{
-
-    console.error(event);
-
-    document.getElementById('vs-txt')
-      .textContent = 'MIC ERROR';
-  };
-}
-
-function toggleMic(){
-
-  if(!recognition){
-    initVoiceRecognition();
-  }
-
-  if(!recognition) return;
-
-  if(listening){
-    recognition.stop();
-  }else{
-    recognition.start();
-  }
-}
-
 
 // ── CLOCK ──
 function tick(){
