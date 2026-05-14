@@ -241,6 +241,59 @@ tr:hover td{background:rgba(0,212,255,.03)}
 .hud-submit{font-family:var(--mono);font-size:10px;color:var(--bg);background:var(--c);border:none;padding:8px 18px;cursor:pointer;font-weight:700;letter-spacing:1px;clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,0 100%);transition:all .14s;margin-top:4px}
 .hud-submit:hover{background:var(--g);color:var(--bg)}
 .hud-divider{height:1px;background:var(--b);margin:4px 0}
+
+/* ── MOBILE ── */
+.mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:9000;background:rgba(3,8,15,.97);border-top:1px solid var(--b)}
+.mob-nav::before{content:'';position:absolute;top:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--c),transparent);pointer-events:none}
+.mob-tabs{display:flex;width:100%}
+.mob-tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 4px 12px;cursor:pointer;font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:.5px;border:none;background:none;gap:3px;transition:color .15s;-webkit-tap-highlight-color:transparent}
+.mob-tab svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.mob-tab.active{color:var(--c)}
+.mob-tab.active svg{filter:drop-shadow(0 0 5px var(--c))}
+.mob-mic-tab{background:rgba(0,255,136,.05)}
+.mob-mic-tab,.mob-mic-tab svg{color:var(--g)}
+.mob-mic-tab.listening{background:rgba(0,255,136,.2) !important}
+.mob-panel-close{display:none;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--b);flex-shrink:0;background:var(--panel)}
+.mob-panel-close-btn{font-family:var(--mono);font-size:10px;color:var(--c);background:none;border:1px solid var(--b2);padding:4px 10px;cursor:pointer;letter-spacing:.5px}
+@media(max-width:768px){
+  .mob-nav{display:flex}
+  .mob-panel-close{display:flex !important}
+  .main{grid-template-columns:1fr !important;padding-bottom:60px}
+  .side{display:none !important;position:fixed;inset:0;bottom:58px;z-index:4000;background:rgba(3,8,15,.98);overflow-y:auto}
+  .side.mob-visible{display:flex !important;flex-direction:column}
+  .hud-area{height:110px;padding:6px}
+  .hrw{width:100px;height:100px}
+  .hstats{gap:10px;margin-left:10px}
+  .hsring{width:40px;height:40px}
+  .hsv{font-size:8px}.hsl{font-size:6px}
+  .topbar{padding:6px 10px;flex-wrap:nowrap}
+  .lname{font-size:11px;letter-spacing:1px}
+  .lsub{display:none}
+  .tb-right{gap:6px}
+  .tb-time{font-size:11px}
+  .tb-date{display:none}
+  .vtog{font-size:8px;padding:4px 7px}
+  .input-area{padding:8px 10px 10px}
+  .irow{padding:6px 6px 6px 12px}
+  #mb{display:none}
+  .messages{padding:10px 12px}
+  .mbub{font-size:12px;padding:8px 11px}
+  .ev-price.mid{font-size:22px}
+  .srow{grid-template-columns:repeat(3,1fr);gap:4px}
+  .svv{font-size:11px}
+  table{font-size:11px}
+  th,td{padding:5px 8px}
+  .hud-select,.hud-input{min-width:unset;width:100%}
+  .hud-row{flex-wrap:wrap}
+  .hud-label{min-width:70px;font-size:8px}
+  .stop-btn{font-size:7px;padding:2px 5px}
+  .chip{font-size:9px;padding:5px 9px}
+  .ev-card{padding:10px 12px}
+  .rwrap{max-width:100%}
+  .sfx-ring:nth-child(3){width:300px;height:300px}
+  .sfx-ring:nth-child(4){width:400px;height:400px}
+  .sfx-ring:nth-child(5){width:480px;height:480px}
+}
 </style>
 </head>
 <body>
@@ -274,7 +327,11 @@ tr:hover td{background:rgba(0,212,255,.03)}
   <!-- MAIN -->
   <div class="main">
     <!-- LEFT -->
-    <div class="side">
+    <div class="side" id="side-left">
+      <div class="mob-panel-close">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--c);letter-spacing:1px">TOWNS</span>
+        <button class="mob-panel-close-btn" onclick="closeMobPanel()">✕ CLOSE</button>
+      </div>
       <div class="pb">
         <div class="plbl">TRANSACTIONS LOADED</div>
         <div class="pval" id="txcount">--</div>
@@ -401,7 +458,11 @@ tr:hover td{background:rgba(0,212,255,.03)}
     </div>
 
     <!-- RIGHT -->
-    <div class="side right">
+    <div class="side right" id="side-right">
+      <div class="mob-panel-close">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--c);letter-spacing:1px">STATS</span>
+        <button class="mob-panel-close-btn" onclick="closeMobPanel()">✕ CLOSE</button>
+      </div>
       <div class="pb">
         <div class="plbl">PRICE RANGE (ALL)</div>
         <div class="sgrid">
@@ -437,6 +498,33 @@ tr:hover td{background:rgba(0,212,255,.03)}
       </div>
     </div>
   </div>
+
+  <!-- MOBILE BOTTOM NAV -->
+  <nav class="mob-nav" id="mob-nav">
+    <div class="mob-tabs">
+      <button class="mob-tab" id="mob-tab-towns" onclick="toggleMobPanel('side-left','mob-tab-towns')">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        TOWNS
+      </button>
+      <button class="mob-tab active" id="mob-tab-chat" onclick="closeMobPanel()">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        HARVEY
+      </button>
+      <button class="mob-tab mob-mic-tab" id="mob-mic-btn" onclick="toggleMobMic()">
+        <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        MIC
+      </button>
+      <button class="mob-tab" id="mob-tab-stats" onclick="toggleMobPanel('side-right','mob-tab-stats')">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        STATS
+      </button>
+      <button class="mob-tab" id="mob-tab-search" onclick="mobSearch()">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        SEARCH
+      </button>
+    </div>
+  </nav>
+
 </div>
 
 <script>
@@ -2410,6 +2498,51 @@ if(SR){
   vsSup.textContent='SAY "WAKE UP HARVEY" OR CLICK 🎤';vsSup.style.color='var(--g)';
   micState='wake';setTimeout(()=>safeStart(),3000);
 }else{mbEl.style.display='none';vsSup.textContent='USE CHROME/EDGE FOR VOICE';vsSup.style.color='var(--a)';}
+
+// ── MOBILE PANEL TOGGLE ──
+function toggleMobPanel(panelId,tabId){
+  const panel=document.getElementById(panelId);
+  const isOpen=panel?.classList.contains('mob-visible');
+  closeMobPanel();
+  if(!isOpen){
+    panel?.classList.add('mob-visible');
+    document.querySelectorAll('.mob-tab').forEach(t=>t.classList.remove('active'));
+    document.getElementById(tabId)?.classList.add('active');
+  }
+}
+function closeMobPanel(){
+  document.querySelectorAll('.side').forEach(s=>s.classList.remove('mob-visible'));
+  document.querySelectorAll('.mob-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('mob-tab-chat')?.classList.add('active');
+}
+function mobSearch(){
+  closeMobPanel();
+  setTimeout(()=>{ciEl?.focus();ciEl?.scrollIntoView({behavior:'smooth'});},100);
+  document.querySelectorAll('.mob-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('mob-tab-search')?.classList.add('active');
+}
+// Mobile mic — uses same state machine as desktop
+function toggleMobMic(){
+  const btn=document.getElementById('mob-mic-btn');
+  if(micState==='query'){
+    micState='wake';
+    try{recog?.abort();}catch(e){}
+    btn?.classList.remove('listening');
+  }else{
+    closeMobPanel();
+    micState='query';
+    try{recog?.abort();}catch(e){}
+    setTimeout(()=>safeStart(),200);
+    btn?.classList.add('listening');
+  }
+}
+// Sync mob mic button with mic state
+setInterval(()=>{
+  const btn=document.getElementById('mob-mic-btn');
+  if(!btn)return;
+  if(micState==='query'&&recogBusy)btn.classList.add('listening');
+  else btn.classList.remove('listening');
+},400);
 
 // ── BOOT ──
 window.addEventListener('load',async()=>{
