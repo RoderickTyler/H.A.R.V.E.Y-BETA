@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>BlockSense — HARVEY</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -15,7 +17,7 @@
   --b:rgba(0,212,255,0.15);--b2:rgba(0,212,255,0.4);
   --mono:'Share Tech Mono',monospace;--hud:'Orbitron',monospace;--ui:'Rajdhani',sans-serif;
 }
-html,body{height:100%;background:var(--bg);color:var(--t);font-family:var(--ui);overflow:hidden}
+html,body{height:100%;background:var(--bg);color:var(--t);font-family:var(--ui);overflow:hidden;-webkit-overflow-scrolling:touch;touch-action:manipulation}
 body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.1) 2px,rgba(0,0,0,0.1) 4px);pointer-events:none;z-index:9999}
 .grid-bg{position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.025) 1px,transparent 1px);background-size:44px 44px;z-index:0;pointer-events:none}
 .cg{position:fixed;z-index:0;pointer-events:none;border-radius:50%}
@@ -256,10 +258,35 @@ tr:hover td{background:rgba(0,212,255,.03)}
 .mob-panel-close{display:none;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--b);flex-shrink:0;background:var(--panel)}
 .mob-panel-close-btn{font-family:var(--mono);font-size:10px;color:var(--c);background:none;border:1px solid var(--b2);padding:4px 10px;cursor:pointer;letter-spacing:.5px}
 @media(max-width:768px){
+  /* iOS Safari height — dvh accounts for browser chrome */
+  html,body{height:100dvh;height:-webkit-fill-available}
+  .shell{height:100dvh;height:-webkit-fill-available}
+  /* Scrollable areas on iOS */
+  .messages{-webkit-overflow-scrolling:touch;overflow-y:auto !important}
+  .side.mob-visible{-webkit-overflow-scrolling:touch;overflow-y:auto}
+  /* ALL tappable elements — critical for iOS Safari */
+  button,.chip,.mob-tab,.trow,.ritem,.hud-submit,.stop-btn,.vtog,.sbtn,.mbtn,a,select,label{
+    -webkit-tap-highlight-color:rgba(0,212,255,0.15);
+    touch-action:manipulation;
+  }
+  /* font-size 16px on inputs prevents iOS auto-zoom */
+  #ci,input,select,textarea,.hud-select{
+    -webkit-appearance:none;
+    font-size:16px !important;
+    touch-action:manipulation;
+  }
+  /* Safe area for notch/home bar */
+  .mob-nav{padding-bottom:env(safe-area-inset-bottom,0px)}
+  .main{padding-bottom:calc(60px + env(safe-area-inset-bottom,0px))}
+  /* Remove clip-path — blocks touch in iOS Safari */
+  .irow,.sbtn,.mbtn,.chip,.hud-submit,.stop-btn,.vtog{clip-path:none !important}
+  /* Minimum tap target size */
+  .mob-tab{min-height:48px;min-width:44px}
+
   .mob-nav{display:flex}
   .mob-panel-close{display:flex !important}
-  .main{grid-template-columns:1fr !important;padding-bottom:60px}
-  .side{display:none !important;position:fixed;inset:0;bottom:58px;z-index:4000;background:rgba(3,8,15,.98);overflow-y:auto}
+  .main{grid-template-columns:1fr !important}
+  .side{display:none !important;position:fixed;inset:0;bottom:calc(58px + env(safe-area-inset-bottom,0px));z-index:4000;background:rgba(3,8,15,.98);overflow-y:auto;-webkit-overflow-scrolling:touch}
   .side.mob-visible{display:flex !important;flex-direction:column}
   .hud-area{height:110px;padding:6px}
   .hrw{width:100px;height:100px}
@@ -273,7 +300,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .tb-time{font-size:11px}
   .tb-date{display:none}
   .vtog{font-size:8px;padding:4px 7px}
-  .input-area{padding:8px 10px 10px}
+  .input-area{padding:8px 10px calc(10px + env(safe-area-inset-bottom,0px))}
   .irow{padding:6px 6px 6px 12px}
   #mb{display:none}
   .messages{padding:10px 12px}
@@ -287,7 +314,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .hud-row{flex-wrap:wrap}
   .hud-label{min-width:70px;font-size:8px}
   .stop-btn{font-size:7px;padding:2px 5px}
-  .chip{font-size:9px;padding:5px 9px}
+  .chip{font-size:9px;padding:5px 9px;min-height:36px;display:inline-flex;align-items:center}
   .ev-card{padding:10px 12px}
   .rwrap{max-width:100%}
   .sfx-ring:nth-child(3){width:300px;height:300px}
@@ -540,15 +567,15 @@ const SHEET_URLS = {
   townstreets:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=townstreets`
 };
 
-// ── KOKORO TTS — 100% local, no API key, no credits, runs in browser ──
-// Voice: bm_george (British male, authoritative — closest to Jarvis)
-// Model downloads once (~85MB for q8), then cached in browser forever
+// ── TTS ENGINE ──
+// Kokoro (85MB WASM model) only on desktop — mobile gets browser TTS to avoid crash
+const IS_MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
 const KOKORO_VOICE = 'bm_george';
-const VOICE_SPEED  = 1.275; // 1.5 × 0.85
+const VOICE_SPEED  = 1.275;
 
-let kokoroTTS   = null;   // loaded lazily on first speak
-let kokoroReady = false;
-let kokoroLoading = false;
+let kokoroTTS    = null;
+let kokoroReady  = false;
+let kokoroLoading= false;
 let currentAudio = null;
 
 const DB = { resale:[], townStreets:{}, loaded:false };
@@ -561,6 +588,7 @@ const sbEl   = document.getElementById('sb');
 
 // Load Kokoro in background — show progress in db-status indicator
 async function loadKokoro(){
+  if(IS_MOBILE)return; // never load on mobile — too heavy, crashes browser
   if(kokoroReady||kokoroLoading)return;
   kokoroLoading=true;
   try{
@@ -568,8 +596,8 @@ async function loadKokoro(){
     const {KokoroTTS}=await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm');
     document.getElementById('db-status').textContent='VOICE...';
     kokoroTTS=await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{
-      dtype:'q8',       // ~85MB — good quality, fast
-      device:'wasm',    // works on all browsers, no WebGPU needed
+      dtype:'q8',
+      device:'wasm',
     });
     kokoroReady=true;
     kokoroLoading=false;
@@ -614,13 +642,18 @@ async function speak(txt){
     }
   }
 
-  // Fallback: browser TTS (always works, no quality guarantee)
+  // Fallback: browser TTS — always works, no crash risk
   const u=new SpeechSynthesisUtterance(clean);
-  u.rate=VOICE_SPEED;u.pitch=0.75;u.volume=0.9;
-  // Try to pick a decent male British voice
-  const voices=window.speechSynthesis.getVoices();
-  const brit=voices.find(v=>v.name.includes('George')||v.name.includes('Daniel')||v.name.includes('UK English Male'));
-  if(brit)u.voice=brit;
+  u.rate=IS_MOBILE?1.1:VOICE_SPEED; // slightly slower on mobile for clarity
+  u.pitch=0.75;u.volume=0.9;
+  // Best available male voice priority
+  const vv=window.speechSynthesis.getVoices();
+  const pick=
+    vv.find(v=>/daniel|george|oliver|arthur/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/male/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/en-GB/i.test(v.lang))||
+    vv.find(v=>/en/i.test(v.lang))||null;
+  if(pick)u.voice=pick;
   u.onend=()=>{
     document.querySelector('.hrw')?.classList.remove('speaking');
     document.getElementById('harvey-speaking-fx')?.classList.remove('active');
@@ -2546,8 +2579,8 @@ setInterval(()=>{
 
 // ── BOOT ──
 window.addEventListener('load',async()=>{
-  // Start loading Kokoro model in background — non-blocking
-  loadKokoro(); // ~85MB download, cached after first time
+  // Start loading Kokoro only on desktop (mobile skips — too heavy)
+  if(!IS_MOBILE) loadKokoro();
   setTimeout(()=>{
     document.getElementById('welcome')?.remove();
     const boot=document.createElement('div');boot.className='msg-ai';
