@@ -1,0 +1,2430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BlockSense — HARVEY</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#03080f;--panel:#060f1c;--panel2:#07121f;
+  --c:#00d4ff;--c2:#0099bb;--c3:rgba(0,212,255,0.12);
+  --g:#00ff88;--a:#ffaa00;--r:#ff4444;
+  --t:#cce8ff;--t2:#5a8aaa;--t3:#1a3a50;--t4:#0a1e2e;
+  --b:rgba(0,212,255,0.15);--b2:rgba(0,212,255,0.4);
+  --mono:'Share Tech Mono',monospace;--hud:'Orbitron',monospace;--ui:'Rajdhani',sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--t);font-family:var(--ui);overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.1) 2px,rgba(0,0,0,0.1) 4px);pointer-events:none;z-index:9999}
+.grid-bg{position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.025) 1px,transparent 1px);background-size:44px 44px;z-index:0;pointer-events:none}
+.cg{position:fixed;z-index:0;pointer-events:none;border-radius:50%}
+.cg1{top:-120px;left:-120px;width:400px;height:400px;background:radial-gradient(circle,rgba(0,80,180,0.12) 0%,transparent 70%)}
+.cg2{bottom:-120px;right:-120px;width:400px;height:400px;background:radial-gradient(circle,rgba(0,212,255,0.07) 0%,transparent 70%)}
+.cg3{top:50%;left:50%;transform:translate(-50%,-50%);width:700px;height:700px;background:radial-gradient(circle,rgba(0,50,120,0.08) 0%,transparent 65%)}
+.shell{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* TOP BAR */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:rgba(3,8,15,0.95);border-bottom:1px solid var(--b);flex-shrink:0;position:relative}
+.topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--c),transparent);animation:glow 3s ease-in-out infinite;pointer-events:none}
+@keyframes glow{0%,100%{opacity:.3}50%{opacity:1}}
+.tb-logo{display:flex;align-items:center;gap:10px}
+.hring{position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hring svg{position:absolute;inset:0;width:100%;height:100%}
+.r1{animation:spin 8s linear infinite}.r2{animation:spin 5s linear infinite reverse}
+@keyframes spin{to{transform:rotate(360deg)}}
+.rdiamond{width:11px;height:11px;background:var(--c);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);box-shadow:0 0 10px var(--c);animation:rpulse 2s infinite}
+@keyframes rpulse{0%,100%{opacity:1;box-shadow:0 0 8px var(--c)}50%{opacity:.4;box-shadow:0 0 22px var(--c)}}
+.lname{font-family:var(--hud);font-size:14px;font-weight:700;color:var(--c);letter-spacing:3px;text-shadow:0 0 15px rgba(0,212,255,.5)}
+.lsub{font-family:var(--mono);font-size:8px;color:var(--t2);letter-spacing:2px;display:block;margin-top:1px}
+.tb-right{display:flex;align-items:center;gap:12px}
+.live-pill{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--g);letter-spacing:1px}
+.ldot{width:6px;height:6px;background:var(--g);border-radius:50%;box-shadow:0 0 8px var(--g);animation:ldot 1.5s infinite}
+@keyframes ldot{0%,100%{opacity:1}50%{opacity:.1}}
+.tb-time{font-family:var(--hud);font-size:14px;color:var(--c);letter-spacing:2px;text-shadow:0 0 10px rgba(0,212,255,.4)}
+.tb-date{font-family:var(--mono);font-size:8px;color:var(--t2);letter-spacing:1px;text-align:right;margin-top:1px}
+.vtog{font-family:var(--mono);font-size:9px;color:var(--c2);background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.2);padding:5px 10px;cursor:pointer;letter-spacing:1px;clip-path:polygon(5px 0,100% 0,100% 100%,0 100%,0 5px);transition:all .14s;white-space:nowrap}
+.vtog:hover{background:var(--c3);border-color:var(--b2)}
+/* Stop speech button */
+.stop-btn{font-family:var(--mono);font-size:8px;color:var(--r);background:rgba(255,68,68,.06);border:1px solid rgba(255,68,68,.2);padding:3px 8px;cursor:pointer;letter-spacing:1px;transition:all .14s;white-space:nowrap;flex-shrink:0}
+.stop-btn:hover{background:rgba(255,68,68,.15);border-color:var(--r)}
+/* Sortable table headers */
+.sort-th{cursor:pointer;user-select:none;white-space:nowrap}
+.sort-th:hover{color:var(--c) !important}
+.sort-th .sort-arrow{margin-left:4px;opacity:0.4;font-size:8px}
+.sort-th.asc .sort-arrow::after{content:'▲';opacity:1}
+.sort-th.desc .sort-arrow::after{content:'▼';opacity:1}
+.sort-th .sort-arrow::after{content:'⇅'}
+
+/* MAIN 3-COLUMN */
+.main{display:grid;grid-template-columns:230px 1fr 230px;flex:1;overflow:hidden}
+.side{background:rgba(4,10,18,.7);border-right:1px solid var(--b);display:flex;flex-direction:column;overflow:hidden}
+.side.right{border-right:none;border-left:1px solid var(--b)}
+.pb{border-bottom:1px solid var(--b);padding:10px 12px;flex-shrink:0;position:relative}
+.pb::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,var(--c2),transparent);pointer-events:none}
+.plbl{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:2px;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.plbl::before{content:'▸';color:var(--c)}
+.pval{font-family:var(--hud);font-size:18px;font-weight:700;color:var(--c);text-shadow:0 0 12px rgba(0,212,255,.4)}
+.pval-sub{font-family:var(--mono);font-size:9px;color:var(--t2);margin-top:2px;letter-spacing:.5px}
+.mbar{height:4px;background:var(--t4);border-radius:2px;overflow:hidden;margin-top:6px}
+.mbar-f{height:100%;background:linear-gradient(90deg,var(--c2),var(--c));border-radius:2px}
+.mbar-f.g{background:linear-gradient(90deg,#008855,var(--g))}
+.sgrid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:4px}
+.sc2{background:var(--t4);border:1px solid var(--b);padding:6px 8px}
+.sc2 .sv{font-family:var(--hud);font-size:12px;color:var(--g);display:block}
+.sc2 .sl{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:.5px;margin-top:1px}
+.tlist{display:flex;flex-direction:column;gap:3px;margin-top:5px}
+.trow{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:9px;color:var(--t2);padding:3px 0;border-bottom:1px solid rgba(0,212,255,.04);cursor:pointer;transition:color .1s;gap:6px}
+.trow:hover{color:var(--c)}
+.tbar{width:38px;height:3px;background:var(--t4);border-radius:1px;overflow:hidden;flex-shrink:0}
+.tbar-f{height:100%;background:var(--c2);border-radius:1px}
+.tp{font-family:var(--hud);font-size:9px;color:var(--g);flex-shrink:0}
+.rlist{display:flex;flex-direction:column;gap:3px;margin-top:5px;overflow-y:auto;max-height:170px}
+.ritem{font-family:var(--mono);font-size:9px;color:var(--t2);padding:4px 6px;border:1px solid var(--b);background:var(--t4);cursor:pointer;transition:all .1s;line-height:1.6}
+.ritem:hover{border-color:var(--b2);color:var(--c);background:var(--c3)}
+.ritem .rp{color:var(--g);float:right}
+.ritem .rt{display:block;color:var(--t3);font-size:8px;margin-top:1px}
+
+/* CENTRE */
+.centre{display:flex;flex-direction:column;overflow:hidden;position:relative}
+.hud-area{display:flex;align-items:center;justify-content:center;padding:10px;flex-shrink:0;height:195px}
+.hrw{position:relative;width:174px;height:174px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hrw svg{position:absolute;inset:0;width:100%;height:100%}
+.hr1{animation:spin 20s linear infinite}.hr2{animation:spin 12s linear infinite reverse}
+.hr3{animation:spin 7s linear infinite}.hr4{animation:spin 4s linear infinite reverse}
+.hcore{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2;text-align:center;width:220px;pointer-events:none}
+.hnum{font-family:var(--hud);font-size:15px;font-weight:900;color:var(--c);text-shadow:0 0 28px var(--c);letter-spacing:4px;white-space:nowrap}
+.hlbl{font-family:var(--mono);font-size:7px;color:var(--t2);letter-spacing:2px;margin-top:4px}
+.hrw.speaking .hr3{animation:spin 1.5s linear infinite!important}
+.hrw.speaking .hr4{animation:spin 0.8s linear infinite!important}
+.hrw.speaking .hnum{color:var(--g)!important;text-shadow:0 0 30px var(--g)!important;transition:all .3s}
+/* Jarvis speaking overlay — fullscreen pulse rings behind content */
+#harvey-speaking-fx{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  pointer-events:none;z-index:8000;
+  display:none;align-items:center;justify-content:center;
+  width:100vw;height:100vh;
+}
+#harvey-speaking-fx.active{display:flex;}
+.sfx-ring{
+  position:absolute;border-radius:50%;border:1px solid rgba(0,212,255,0);
+  animation:sfxPulse 2s ease-out infinite;
+}
+.sfx-ring:nth-child(1){width:180px;height:180px;animation-delay:0s}
+.sfx-ring:nth-child(2){width:320px;height:320px;animation-delay:0.4s}
+.sfx-ring:nth-child(3){width:480px;height:480px;animation-delay:0.8s}
+.sfx-ring:nth-child(4){width:650px;height:650px;animation-delay:1.2s}
+.sfx-ring:nth-child(5){width:820px;height:820px;animation-delay:1.6s}
+@keyframes sfxPulse{
+  0%{border-color:rgba(0,212,255,0.6);transform:scale(0.3);opacity:1}
+  100%{border-color:rgba(0,212,255,0);transform:scale(1);opacity:0}
+}
+/* Sound wave bars under HUD ring when speaking */
+.sfx-bars{
+  position:absolute;bottom:-28px;left:50%;transform:translateX(-50%);
+  display:none;gap:3px;align-items:flex-end;height:20px;
+}
+.hrw.speaking .sfx-bars{display:flex;}
+.sfx-bar{
+  width:3px;background:var(--g);border-radius:2px;
+  animation:sfxBar 0.6s ease-in-out infinite alternate;
+  box-shadow:0 0 4px var(--g);
+}
+.sfx-bar:nth-child(1){height:6px;animation-delay:0s}
+.sfx-bar:nth-child(2){height:14px;animation-delay:0.08s}
+.sfx-bar:nth-child(3){height:20px;animation-delay:0.16s}
+.sfx-bar:nth-child(4){height:14px;animation-delay:0.24s}
+.sfx-bar:nth-child(5){height:8px;animation-delay:0.32s}
+.sfx-bar:nth-child(6){height:18px;animation-delay:0.4s}
+.sfx-bar:nth-child(7){height:10px;animation-delay:0.48s}
+@keyframes sfxBar{from{transform:scaleY(0.3);opacity:0.5}to{transform:scaleY(1);opacity:1}}
+.hstats{display:flex;gap:20px;margin-left:18px}
+.hsi{display:flex;flex-direction:column;align-items:center;gap:3px}
+.hsring{position:relative;width:54px;height:54px;display:flex;align-items:center;justify-content:center}
+.hsring svg{position:absolute;inset:0}
+.hsv{font-family:var(--hud);font-size:10px;font-weight:700;color:var(--c);z-index:2;text-align:center}
+.hsl{font-family:var(--mono);font-size:7px;color:var(--t2);letter-spacing:.5px}
+.hdiv{height:1px;background:linear-gradient(90deg,transparent,var(--b2),transparent);flex-shrink:0}
+
+/* CHAT */
+.chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.messages{flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:12px;scroll-behavior:smooth}
+.messages::-webkit-scrollbar{width:3px}
+.messages::-webkit-scrollbar-thumb{background:var(--b2)}
+.welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:16px;gap:10px;flex:1;min-height:100px}
+.welcome h3{font-family:var(--hud);font-size:12px;color:var(--c);letter-spacing:3px;text-shadow:0 0 12px rgba(0,212,255,.4)}
+.welcome p{font-family:var(--mono);font-size:10px;color:var(--t2);letter-spacing:.5px;line-height:1.9}
+.wchips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px}
+.msg-ai{display:flex;flex-direction:column;gap:5px;max-width:94%;align-self:flex-start;animation:min .2s ease}
+.msg-user{align-self:flex-end;max-width:60%;animation:min .2s ease}
+@keyframes min{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.mlbl{font-family:var(--mono);font-size:8px;color:var(--c2);letter-spacing:2px;padding-left:3px}
+.mbub{background:var(--panel2);border:1px solid var(--b);border-left:2px solid var(--c2);padding:9px 13px;font-family:var(--ui);font-size:13px;line-height:1.7;color:var(--t);clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,0 100%);position:relative}
+.mbub::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,var(--c2),transparent);pointer-events:none}
+.mbub strong{color:var(--c);font-weight:500}
+.msg-user .mbub{background:rgba(0,70,150,.18);border:1px solid rgba(0,212,255,.25);border-right:2px solid var(--c);border-left:none;clip-path:polygon(8px 0,100% 0,100% 100%,0 100%,0 8px)}
+.msg-user .mbub::before{background:linear-gradient(90deg,transparent,var(--c))}
+.chip{font-family:var(--mono);font-size:9px;color:var(--c);background:rgba(0,212,255,.05);border:1px solid rgba(0,212,255,.2);padding:5px 11px;cursor:pointer;clip-path:polygon(6px 0,100% 0,100% 100%,0 100%,0 6px);transition:all .14s;letter-spacing:.5px;white-space:nowrap}
+.chip:hover{background:rgba(0,212,255,.14);border-color:var(--c);box-shadow:0 0 10px rgba(0,212,255,.2)}
+
+/* Result cards */
+.rwrap{display:flex;flex-direction:column;gap:6px;max-width:100%}
+.rcard{background:var(--panel);border:1px solid var(--b2);position:relative;overflow:hidden}
+.rcard::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--c),transparent);pointer-events:none}
+.rcard::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--c2),transparent);pointer-events:none}
+.rh{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:rgba(0,212,255,.04);border-bottom:1px solid var(--b)}
+.rtitle{font-family:var(--mono);font-size:9px;color:var(--c);letter-spacing:1px}
+.rcnt{font-family:var(--mono);font-size:8px;color:var(--t3);background:rgba(0,212,255,.05);padding:2px 8px;border:1px solid var(--b)}
+table{width:100%;border-collapse:collapse}
+th{padding:5px 11px;font-family:var(--mono);font-size:8px;font-weight:400;color:var(--t2);letter-spacing:1px;border-bottom:1px solid var(--b);background:rgba(0,0,0,.2);text-align:left}
+td{padding:6px 11px;color:var(--t);border-bottom:1px solid rgba(0,212,255,.03);font-family:var(--ui);font-size:12px}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(0,212,255,.03)}
+.pc{font-family:var(--mono);font-size:11px;color:var(--g);text-shadow:0 0 6px rgba(0,255,136,.25)}
+.srow{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.sc{background:var(--panel);border:1px solid var(--b);padding:8px 12px;text-align:center;clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,0 100%);position:relative}
+.sc::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,var(--c2),transparent);pointer-events:none}
+.svv{display:block;font-family:var(--hud);font-size:13px;font-weight:700;color:var(--g);text-shadow:0 0 10px rgba(0,255,136,.3)}
+.sll{display:block;font-family:var(--mono);font-size:8px;color:var(--t3);margin-top:2px;letter-spacing:1px}
+/* EV result card */
+.ev-card{background:var(--panel);border:1px solid rgba(0,212,255,.5);padding:14px 16px;position:relative;margin-top:6px}
+.ev-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--c),transparent);pointer-events:none}
+.ev-range{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin:10px 0}
+.ev-price{font-family:var(--hud);font-size:18px;font-weight:700;text-align:center}
+.ev-price.low{color:var(--c)}
+.ev-price.mid{color:var(--g);font-size:22px}
+.ev-price.hi{color:var(--a)}
+.ev-label{font-family:var(--mono);font-size:8px;color:var(--t3);text-align:center;letter-spacing:1px;margin-top:3px}
+.ev-arrow{font-family:var(--mono);font-size:14px;color:var(--t3);text-align:center}
+.ev-meta{font-family:var(--mono);font-size:9px;color:var(--t2);line-height:1.9;margin-top:10px;border-top:1px solid var(--b);padding-top:8px}
+.ev-warn{background:rgba(255,170,0,.08);border:1px solid rgba(255,170,0,.3);padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--a);margin-top:8px;line-height:1.8}
+.ev-none{background:rgba(0,212,255,.04);border:1px solid var(--b);padding:12px;font-family:var(--mono);font-size:10px;color:var(--t2);line-height:1.9;margin-top:6px}
+/* Typing */
+.typing{display:flex;gap:5px;align-items:center;padding:10px 13px}
+.tdot{width:5px;height:5px;background:var(--c);border-radius:50%;box-shadow:0 0 5px var(--c);animation:tdot 1.4s infinite}
+.tdot:nth-child(2){animation-delay:.2s}.tdot:nth-child(3){animation-delay:.4s}
+@keyframes tdot{0%,80%,100%{opacity:.15;transform:scale(.8)}40%{opacity:1;transform:scale(1.2)}}
+.errbub{background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.25);padding:8px 12px;font-family:var(--mono);font-size:10px;color:var(--a)}
+
+/* INPUT */
+.input-area{padding:10px 16px 14px;border-top:1px solid var(--b);flex-shrink:0;position:relative}
+.input-area::before{content:'';position:absolute;top:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--c),transparent);pointer-events:none}
+.vs-bar{display:none;align-items:center;gap:8px;padding:4px 2px;font-family:var(--mono);font-size:9px;color:var(--g);letter-spacing:1px;margin-bottom:6px}
+.vs-bar span.dot{width:6px;height:6px;background:var(--g);border-radius:50%;box-shadow:0 0 8px var(--g);animation:ldot .6s infinite;flex-shrink:0;display:inline-block}
+.irow{display:flex;gap:8px;align-items:flex-end;background:var(--panel);border:1px solid var(--b2);padding:7px 7px 7px 14px;clip-path:polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,12px 100%,0 calc(100% - 12px));transition:border-color .2s,box-shadow .2s;position:relative}
+.irow::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,var(--c2),transparent);pointer-events:none}
+.irow:focus-within{border-color:var(--c);box-shadow:0 0 18px rgba(0,212,255,.07)}
+.ipfx{font-family:var(--mono);font-size:13px;color:var(--c);flex-shrink:0;text-shadow:0 0 8px var(--c);animation:cur 1s step-end infinite}
+@keyframes cur{0%,100%{opacity:1}50%{opacity:.1}}
+#ci{flex:1;background:none;border:none;outline:none;color:var(--t);font-family:var(--mono);font-size:12px;line-height:1.5;resize:none;max-height:80px;min-height:20px;letter-spacing:.3px}
+#ci::placeholder{color:var(--t3)}
+.sbtn{width:38px;height:38px;flex-shrink:0;background:rgba(0,212,255,.08);border:1px solid var(--b2);cursor:pointer;display:flex;align-items:center;justify-content:center;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,0 100%);transition:all .14s;color:var(--c)}
+.sbtn:hover{background:rgba(0,212,255,.18);border-color:var(--c);box-shadow:0 0 14px rgba(0,212,255,.2)}
+.sbtn:active{transform:scale(.92)}.sbtn:disabled{opacity:.25;cursor:not-allowed}.sbtn svg{width:16px;height:16px}
+.mbtn{width:38px;height:38px;flex-shrink:0;background:rgba(0,255,136,.06);border:1px solid rgba(0,255,136,.25);cursor:pointer;display:flex;align-items:center;justify-content:center;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,0 100%);transition:all .14s;color:var(--g)}
+.mbtn:hover{background:rgba(0,255,136,.15);border-color:var(--g);box-shadow:0 0 14px rgba(0,255,136,.2)}
+.mbtn.active{background:rgba(0,255,136,.2);border-color:var(--g);animation:mpulse 1s infinite}
+@keyframes mpulse{0%,100%{box-shadow:0 0 10px rgba(0,255,136,.3)}50%{box-shadow:0 0 28px rgba(0,255,136,.7)}}
+.mbtn svg{width:16px;height:16px}
+.ifooter{display:flex;justify-content:space-between;margin-top:6px;padding:0 2px}
+.ihint{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:.8px}
+/* HUD inline form dropdowns */
+.hud-form{display:flex;flex-direction:column;gap:8px;margin-top:10px;max-width:520px}
+.hud-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.hud-label{font-family:var(--mono);font-size:9px;color:var(--t2);letter-spacing:1px;min-width:90px;flex-shrink:0}
+.hud-select{background:var(--t4);border:1px solid var(--b2);color:var(--c);font-family:var(--mono);font-size:11px;padding:5px 10px;cursor:pointer;outline:none;clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,0 100%);min-width:140px;max-width:220px}
+.hud-select:focus{border-color:var(--c);box-shadow:0 0 8px rgba(0,212,255,.2)}
+.hud-select option{background:var(--panel);color:var(--t)}
+.hud-input{background:var(--t4);border:1px solid var(--b2);color:var(--c);font-family:var(--mono);font-size:11px;padding:5px 10px;outline:none;width:80px}
+.hud-input:focus{border-color:var(--c)}
+.hud-badge{font-family:var(--mono);font-size:9px;color:var(--g);background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.2);padding:2px 7px;white-space:nowrap}
+.hud-submit{font-family:var(--mono);font-size:10px;color:var(--bg);background:var(--c);border:none;padding:8px 18px;cursor:pointer;font-weight:700;letter-spacing:1px;clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,0 100%);transition:all .14s;margin-top:4px}
+.hud-submit:hover{background:var(--g);color:var(--bg)}
+.hud-divider{height:1px;background:var(--b);margin:4px 0}
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="cg cg1"></div><div class="cg cg2"></div><div class="cg cg3"></div>
+<!-- Jarvis speaking effect -->
+<div id="harvey-speaking-fx">
+  <div class="sfx-ring"></div><div class="sfx-ring"></div><div class="sfx-ring"></div>
+  <div class="sfx-ring"></div><div class="sfx-ring"></div>
+</div>
+
+<div class="shell">
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="tb-logo">
+      <div class="hring">
+        <svg viewBox="0 0 36 36" fill="none">
+          <circle class="r1" cx="18" cy="18" r="16" stroke="rgba(0,212,255,.3)" stroke-width=".5" stroke-dasharray="4 3"/>
+          <circle class="r2" cx="18" cy="18" r="10" stroke="rgba(0,212,255,.6)" stroke-width="1" stroke-dasharray="2 4"/>
+        </svg>
+        <div class="rdiamond"></div>
+      </div>
+      <div><span class="lname">BLOCKSENSE</span><span class="lsub">HARVEY · HDB ANALYTICS & RESEARCH VALUATION ENGINE FOR YOU</span></div>
+    </div>
+    <div class="tb-right" id="tb-right">
+      <div><div class="tb-time" id="clk">--:--:--</div><div class="tb-date" id="dt">---</div></div>
+      <div class="live-pill"><div class="ldot"></div>LIVE · FREE</div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- LEFT -->
+    <div class="side">
+      <div class="pb">
+        <div class="plbl">TRANSACTIONS LOADED</div>
+        <div class="pval" id="txcount">--</div>
+        <div class="pval-sub">HDB RESALE RECORDS</div>
+        <div class="mbar"><div class="mbar-f g" id="load-bar" style="width:0%"></div></div>
+      </div>
+      <div class="pb">
+        <div class="plbl">SYSTEM</div>
+        <div class="sgrid">
+          <div class="sc2"><span class="sv" id="db-status">LOADING</span><span class="sl">DATABASE</span></div>
+          <div class="sc2"><span class="sv" id="lat">--ms</span><span class="sl">LATENCY</span></div>
+          <div class="sc2"><span class="sv">FREE</span><span class="sl">COST</span></div>
+          <div class="sc2"><span class="sv">26</span><span class="sl">TOWNS</span></div>
+        </div>
+      </div>
+      <div class="pb" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+        <div class="plbl">CLICK TO SEARCH</div>
+        <div class="tlist">
+          <div class="trow" onclick="chipClick('recent 4-room Tampines')"><span>TAMPINES</span><div class="tbar"><div class="tbar-f" style="width:90%"></div></div><span class="tp">$530K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Woodlands')"><span>WOODLANDS</span><div class="tbar"><div class="tbar-f" style="width:80%"></div></div><span class="tp">$450K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Yishun')"><span>YISHUN</span><div class="tbar"><div class="tbar-f" style="width:72%"></div></div><span class="tp">$460K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Bedok')"><span>BEDOK</span><div class="tbar"><div class="tbar-f" style="width:68%"></div></div><span class="tp">$520K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Sengkang')"><span>SENGKANG</span><div class="tbar"><div class="tbar-f" style="width:65%"></div></div><span class="tp">$500K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Jurong West')"><span>JURONG WEST</span><div class="tbar"><div class="tbar-f" style="width:60%"></div></div><span class="tp">$470K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Queenstown')"><span>QUEENSTOWN</span><div class="tbar"><div class="tbar-f" style="width:52%"></div></div><span class="tp">$620K</span></div>
+          <div class="trow" onclick="chipClick('recent flats Bukit Timah')"><span>BUKIT TIMAH</span><div class="tbar"><div class="tbar-f" style="width:30%"></div></div><span class="tp">$720K</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTRE -->
+    <div class="centre">
+      <div class="hud-area">
+        <div class="hrw">
+          <svg viewBox="0 0 174 174" fill="none">
+            <circle class="hr1" cx="87" cy="87" r="83" stroke="rgba(0,212,255,.25)" stroke-width="1" stroke-dasharray="4 4"/>
+            <circle class="hr2" cx="87" cy="87" r="74" stroke="rgba(0,212,255,.35)" stroke-width="1.5" stroke-dasharray="8 3"/>
+            <circle class="hr3" cx="87" cy="87" r="64" stroke="rgba(0,212,255,.55)" stroke-width="2" stroke-dasharray="5 4"/>
+            <circle class="hr4" cx="87" cy="87" r="52" stroke="rgba(0,212,255,.8)" stroke-width="2.5" stroke-dasharray="3 5"/>
+            <circle cx="87" cy="87" r="40" stroke="rgba(0,212,255,.9)" stroke-width="1.5"/>
+            <circle cx="87" cy="87" r="40" stroke="rgba(0,212,255,.15)" stroke-width="18" fill="none"/>
+            <g stroke="rgba(0,212,255,.7)" stroke-width="1.5">
+              <line x1="87" y1="3" x2="87" y2="15"/><line x1="87" y1="159" x2="87" y2="171"/>
+              <line x1="3" y1="87" x2="15" y2="87"/><line x1="159" y1="87" x2="171" y2="87"/>
+            </g>
+            <circle cx="87" cy="3" r="3" fill="rgba(0,212,255,.9)"/><circle cx="87" cy="171" r="3" fill="rgba(0,212,255,.7)"/>
+            <circle cx="3" cy="87" r="3" fill="rgba(0,212,255,.7)"/><circle cx="171" cy="87" r="3" fill="rgba(0,212,255,.9)"/>
+          </svg>
+          <div class="hcore">
+            <div class="hnum" id="hnum">HARVEY</div>
+            <div class="hlbl">BY BLOCKSENSE</div>
+          </div>
+          <div class="sfx-bars">
+            <div class="sfx-bar"></div><div class="sfx-bar"></div><div class="sfx-bar"></div>
+            <div class="sfx-bar"></div><div class="sfx-bar"></div><div class="sfx-bar"></div>
+            <div class="sfx-bar"></div>
+          </div>
+        </div>
+        <div class="hstats">
+          <div class="hsi">
+            <div class="hsring">
+              <svg viewBox="0 0 54 54"><circle cx="27" cy="27" r="21" stroke="rgba(0,212,255,.12)" stroke-width="4" fill="none"/>
+              <circle cx="27" cy="27" r="21" stroke="var(--c)" stroke-width="4" fill="none" stroke-dasharray="132" stroke-dashoffset="33" stroke-linecap="round" transform="rotate(-90 27 27)"/></svg>
+              <span class="hsv">4-RM</span>
+            </div><span class="hsl">MOST SOLD</span>
+          </div>
+          <div class="hsi">
+            <div class="hsring">
+              <svg viewBox="0 0 54 54"><circle cx="27" cy="27" r="21" stroke="rgba(0,255,136,.1)" stroke-width="4" fill="none"/>
+              <circle cx="27" cy="27" r="21" stroke="var(--g)" stroke-width="4" fill="none" stroke-dasharray="132" stroke-dashoffset="53" stroke-linecap="round" transform="rotate(-90 27 27)"/></svg>
+              <span class="hsv" style="color:var(--g)" id="avg-price-stat">--</span>
+            </div><span class="hsl">AVG PRICE</span>
+          </div>
+          <div class="hsi">
+            <div class="hsring">
+              <svg viewBox="0 0 54 54"><circle cx="27" cy="27" r="21" stroke="rgba(255,170,0,.1)" stroke-width="4" fill="none"/>
+              <circle cx="27" cy="27" r="21" stroke="var(--a)" stroke-width="4" fill="none" stroke-dasharray="132" stroke-dashoffset="80" stroke-linecap="round" transform="rotate(-90 27 27)"/></svg>
+              <span class="hsv" style="color:var(--a)">+8%</span>
+            </div><span class="hsl">YOY</span>
+          </div>
+        </div>
+      </div>
+      <div class="hdiv"></div>
+      <div class="chat-area">
+        <div class="messages" id="msgs">
+          <div class="welcome" id="welcome">
+            <h3>HARVEY READY</h3>
+            <p>HDB ANALYTICS & RESEARCH VALUATION ENGINE<br>FREE · POWERED BY BLOCKSENSE DATA</p>
+            <div class="wchips">
+              <span class="chip" onclick="chipClick('4-room Tampines under 550000')">▶ 4-ROOM TAMPINES &lt;$550K</span>
+              <span class="chip" onclick="chipClick('value of block 123 Bishan Street 12 floor 8 4-room 93sqm')">▶ ESTIMATE VALUE</span>
+              <span class="chip" onclick="chipClick('cheapest 3-room Queenstown')">▶ CHEAPEST QUEENSTOWN</span>
+              <span class="chip" onclick="chipClick('recent sales Ang Mo Kio Avenue 3')">▶ BY STREET</span>
+            </div>
+          </div>
+        </div>
+        <div class="input-area">
+          <div class="vs-bar" id="vs-bar">
+            <span class="dot"></span>
+            <span id="vs-txt">HARVEY LISTENING…</span>
+          </div>
+          <div class="irow">
+            <span class="ipfx">›_</span>
+            <textarea id="ci" placeholder="Ask HARVEY — town, street, block, floor, value... or say 'wake up Harvey'" rows="1"></textarea>
+            <button class="mbtn" id="mb" onclick="toggleMic()" title="Speak to HARVEY">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="5" y="1" width="6" height="9" rx="3"/>
+                <path d="M2 8c0 3.3 2.7 6 6 6s6-2.7 6-6"/>
+                <line x1="8" y1="14" x2="8" y2="16"/><line x1="5" y1="16" x2="11" y2="16"/>
+              </svg>
+            </button>
+            <button class="sbtn" id="sb" onclick="handleInput()">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <line x1="8" y1="13" x2="8" y2="3"/><polyline points="4 7 8 3 12 7"/>
+              </svg>
+            </button>
+          </div>
+          <div class="ifooter">
+            <span class="ihint">ENTER ↵ · 🎤 MIC · SAY "WAKE UP HARVEY"</span>
+            <span class="ihint" id="vs-sup">DATA: GOOGLE SHEETS → BLOCKSENSE</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="side right">
+      <div class="pb">
+        <div class="plbl">PRICE RANGE (ALL)</div>
+        <div class="sgrid">
+          <div class="sc2"><span class="sv" style="color:var(--g)" id="price-low">--</span><span class="sl">LOWEST</span></div>
+          <div class="sc2"><span class="sv" style="color:var(--r)" id="price-high">--</span><span class="sl">HIGHEST</span></div>
+        </div>
+        <div class="mbar" style="margin-top:8px"><div class="mbar-f" style="width:65%"></div></div>
+      </div>
+      <div class="pb">
+        <div class="plbl">FLAT TYPE SHARE</div>
+        <div class="tlist" id="flat-breakdown">
+          <div class="trow"><span>4 ROOM</span><div class="tbar"><div class="tbar-f" style="width:90%"></div></div><span class="tp">38%</span></div>
+          <div class="trow"><span>5 ROOM</span><div class="tbar"><div class="tbar-f" style="width:70%"></div></div><span class="tp">28%</span></div>
+          <div class="trow"><span>3 ROOM</span><div class="tbar"><div class="tbar-f" style="width:55%"></div></div><span class="tp">22%</span></div>
+          <div class="trow"><span>EXECUTIVE</span><div class="tbar"><div class="tbar-f" style="width:25%"></div></div><span class="tp">8%</span></div>
+          <div class="trow"><span>2 ROOM</span><div class="tbar"><div class="tbar-f" style="width:10%"></div></div><span class="tp">4%</span></div>
+        </div>
+      </div>
+      <div class="pb" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+        <div class="plbl">RECENT QUERIES</div>
+        <div class="rlist" id="rlist">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--t3);padding:8px;text-align:center">NO QUERIES YET</div>
+        </div>
+      </div>
+      <div class="pb">
+        <div class="plbl">DATA SOURCE</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t2);line-height:2;letter-spacing:.5px">
+          SOURCE: BLOCKSENSE DATASET<br>
+          BACKEND: GOOGLE SHEETS<br>
+          LOGIC: BLOCKSENSE EV ENGINE<br>
+          COST: FREE · NO LOGIN
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  HARVEY — HDB Analytics & Research Valuation Engine for You
+//  Data: BlockSense Google Sheet (same as blocksense.estatrix.workers.dev)
+//  Logic: Mirrors BlockSense Estimated Value algorithm exactly
+// ════════════════════════════════════════════════════════════
+
+const GOOGLE_SHEET_ID = '1yIiqAYwkUzDkaoCBIkYdNhIu9fGZltb0UmgP7QRsZOw';
+const SHEET_URLS = {
+  resaletxn: `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=resaletxn`,
+  townstreets:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=townstreets`
+};
+
+// ── SERVER-SIDE TTS CONFIG ──
+// Uses local Python backend running bm_george voice
+// Endpoint: http://127.0.0.1:5000/tts
+
+let currentAudio = null;
+const TTS_SERVER = 'http://127.0.0.1:5000/tts';
+
+const DB = { resale:[], townStreets:{}, loaded:false };
+let loading=false, qn=0, voiceOn=true;
+let mode='boot', ctx={};
+
+const msgsEl = document.getElementById('msgs');
+const ciEl   = document.getElementById('ci');
+const sbEl   = document.getElementById('sb');
+
+// Load Kokoro in background — show progress in db-status indicator
+async function loadKokoro(){
+  // Backend handles TTS now
+  document.getElementById('db-status').textContent='READY';
+  document.getElementById('db-status').style.color='var(--g)';
+}
+
+// ── SPEAK ──
+async function speak(txt){
+  if(!voiceOn || !txt) return;
+
+  const clean = cleanForSpeech ? cleanForSpeech(txt) : txt;
+  if(!clean) return;
+
+  stopSpeech();
+
+  document.querySelector('.hrw')?.classList.add('speaking');
+  document.getElementById('harvey-speaking-fx')?.classList.add('active');
+
+  try{
+    const res = await fetch(TTS_SERVER,{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        text: clean
+      })
+    });
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const audio = new Audio(url);
+    currentAudio = audio;
+
+    audio.onended = ()=>{
+      document.querySelector('.hrw')?.classList.remove('speaking');
+      document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+      currentAudio = null;
+      URL.revokeObjectURL(url);
+    };
+
+    await audio.play();
+
+  }catch(err){
+    console.error('TTS ERROR:', err);
+
+    document.querySelector('.hrw')?.classList.remove('speaking');
+    document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+  }
+}
+
+// ── CLOCK ──
+function tick(){
+  const n=new Date();
+  document.getElementById('clk').textContent=n.toLocaleTimeString('en-SG',{hour12:false});
+  document.getElementById('dt').textContent=n.toLocaleDateString('en-SG',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+}
+tick();setInterval(tick,1000);
+
+ciEl.addEventListener('input',()=>{ciEl.style.height='auto';ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px'});
+ciEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleInput()}});
+function bot(){
+  msgsEl.scrollTop=msgsEl.scrollHeight;
+  const tables=msgsEl.querySelectorAll('table:not(.sortable-done)');
+  tables.forEach(t=>{t.classList.add('sortable-done');makeSortable(t);});
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function rand(a){return a[Math.floor(Math.random()*a.length)]}
+const fmtP=p=>'$'+Number(p).toLocaleString();
+
+// ── Stop speech immediately ──
+function stopSpeech(){
+  if(currentAudio){currentAudio.pause();try{currentAudio.currentTime=0;}catch(e){}currentAudio=null;}
+  window.speechSynthesis?.cancel();
+  document.querySelector('.hrw')?.classList.remove('speaking');
+  document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+}
+
+// ── Sortable table — call after injecting table HTML ──
+function makeSortable(tableEl){
+  if(!tableEl)return;
+  const ths=[...tableEl.querySelectorAll('thead th')];
+  ths.forEach((th,i)=>{
+    th.classList.add('sort-th');
+    th.innerHTML=th.textContent+`<span class="sort-arrow"></span>`;
+    let dir='none';
+    th.addEventListener('click',()=>{
+      ths.forEach(h=>{h.classList.remove('asc','desc');});
+      dir=dir==='asc'?'desc':'asc';
+      th.classList.add(dir);
+      const tbody=tableEl.querySelector('tbody');
+      if(!tbody)return;
+      const rows=[...tbody.querySelectorAll('tr')];
+      const type=th.dataset.type||'text';
+      rows.sort((a,b)=>{
+        const va=a.cells[i]?.textContent.trim()||'';
+        const vb=b.cells[i]?.textContent.trim()||'';
+        if(type==='number'||type==='price'){
+          return dir==='asc'
+            ?(parseFloat(va.replace(/[^0-9.-]/g,''))||0)-(parseFloat(vb.replace(/[^0-9.-]/g,''))||0)
+            :(parseFloat(vb.replace(/[^0-9.-]/g,''))||0)-(parseFloat(va.replace(/[^0-9.-]/g,''))||0);
+        }
+        return dir==='asc'?va.localeCompare(vb):vb.localeCompare(va);
+      });
+      rows.forEach(r=>tbody.appendChild(r));
+    });
+  });
+}
+
+// ── VOICE TOGGLE ──
+const vtb=document.createElement('button');
+vtb.className='vtog';vtb.textContent='🔊 HARVEY ON';
+vtb.onclick=()=>{voiceOn=!voiceOn;vtb.textContent=voiceOn?'🔊 HARVEY ON':'🔇 HARVEY OFF';vtb.style.color=voiceOn?'var(--c2)':'var(--t3)';if(!voiceOn)stopSpeech();};
+document.getElementById('tb-right').prepend(vtb);
+
+// ── CSV PARSER (from BlockSense) ──
+function parseCSV(text){
+  const lines=text.trim().split('\n'); if(lines.length<2)return[];
+  const re=/(\"(?:[^\"]|\"\")*\"|[^,]*)/g;
+  const parseRow=line=>{const r=[],re2=/(\"(?:[^\"]|\"\")*\"|[^,]*)/g;let m;while((m=re2.exec(line))!==null){if(m.index===re2.lastIndex)re2.lastIndex++;let v=m[1];if(v.startsWith('"')&&v.endsWith('"'))v=v.slice(1,-1).replace(/""/g,'"');r.push(v);}return r;};
+  const h=parseRow(lines[0]);
+  return lines.slice(1).map(l=>{const v=parseRow(l);return Object.fromEntries(h.map((k,i)=>[k,v[i]||'']));});
+}
+
+// ── LOAD DATA ──
+async function loadData(){
+  const t0=Date.now();
+  try{
+    harveyMsg('Loading BlockSense data...');
+    const r1=await fetch(SHEET_URLS.resaletxn); if(!r1.ok)throw new Error('Sheet error');
+    DB.resale=parseCSV(await r1.text());
+    const r2=await fetch(SHEET_URLS.townstreets); if(!r2.ok)throw new Error('Streets error');
+    const sd=parseCSV(await r2.text());
+    sd.forEach(row=>{if(row.town&&row.streets)DB.townStreets[row.town]=row.streets.split('|').filter(Boolean).sort();});
+    DB.loaded=true;
+    document.getElementById('lat').textContent=(Date.now()-t0)+'ms';
+    document.getElementById('txcount').textContent=DB.resale.length.toLocaleString();
+    document.getElementById('load-bar').style.width='100%';
+    document.getElementById('db-status').textContent='READY';
+    document.getElementById('db-status').style.color='var(--g)';
+    // Update stats
+    const prices=DB.resale.map(r=>Number(r.resale_price)).filter(p=>p>0);
+    if(prices.length){
+      const avg=prices.reduce((a,b)=>a+b,0)/prices.length;
+      document.getElementById('avg-price-stat').textContent='$'+Math.round(avg/1000)+'K';
+      document.getElementById('price-low').textContent='$'+Math.round(Math.min(...prices)/1000)+'K';
+      document.getElementById('price-high').textContent='$'+Math.round(Math.max(...prices)/1000)+'K';
+    }
+    return true;
+  }catch(e){
+    document.getElementById('db-status').textContent='ERROR'; document.getElementById('db-status').style.color='var(--r)';
+    return false;
+  }
+}
+
+// ── BLOCKSENSE EV HELPERS (exact match) ──
+function parseStoreyMid(s){if(!s)return null;const m=s.match(/(\d+)\s+TO\s+(\d+)/i);if(m)return(parseInt(m[1])+parseInt(m[2]))/2;const n=parseInt(s);return isNaN(n)?null:n;}
+function storeyRangeLow(s){if(!s)return null;const m=s.match(/(\d+)\s+TO\s+(\d+)/i);return m?parseInt(m[1]):parseInt(s)||null;}
+function evCutoff(months){const d=new Date();d.setMonth(d.getMonth()-months);return d.toISOString().slice(0,7);}
+function floorToStorey(f){
+  const bands=[[1,3],[4,6],[7,9],[10,12],[13,15],[16,18],[19,21],[22,24],[25,27],[28,30],[31,33],[34,36],[37,39],[40,42],[43,45],[46,48],[49,51]];
+  const b=bands.find(b=>f>=b[0]&&f<=b[1]);
+  return b?`${String(b[0]).padStart(2,'0')} TO ${String(b[1]).padStart(2,'0')}`:null;
+}
+
+// ── CORE ESTIMATION ENGINE (BlockSense logic) ──
+function computeEstimate(params){
+  // params: { town, flatType, street, block, floor, size, leaseYear? }
+  const {town,flatType,street,block,floor,size,leaseYear}=params;
+  const LEASE_WINDOW=3, MIN_COMPS=2;
+  const mySize=Number(size), myFloor=Number(floor);
+
+  function leaseOk(r){
+    if(!leaseYear)return true;
+    const ly=parseInt(r.lease_commence_date)||0;
+    return ly>=leaseYear-LEASE_WINDOW&&ly<=leaseYear+LEASE_WINDOW;
+  }
+  function queryComps(cutoff,level){
+    if(level==='block') return DB.resale.filter(r=>r.town===town&&r.street_name===street&&r.block===block&&r.flat_type===flatType&&r.month>=cutoff&&Math.abs(Number(r.floor_area_sqm)-mySize)<=3&&leaseOk(r));
+    if(level==='street') return DB.resale.filter(r=>r.town===town&&r.street_name===street&&r.flat_type===flatType&&r.month>=cutoff&&Math.abs(Number(r.floor_area_sqm)-mySize)<=3&&leaseOk(r));
+    return DB.resale.filter(r=>r.town===town&&r.flat_type===flatType&&r.month>=cutoff&&Math.abs(Number(r.floor_area_sqm)-mySize)<=5&&leaseOk(r));
+  }
+
+  let comps=[],lookbackUsed=6,fallbackLevel='block';
+  comps=queryComps(evCutoff(6),'block');
+  if(comps.length>=MIN_COMPS){lookbackUsed=6;fallbackLevel='block';}
+  else{
+    comps=queryComps(evCutoff(12),'block');
+    if(comps.length>=MIN_COMPS){lookbackUsed=12;fallbackLevel='block';}
+    else{
+      const s6=queryComps(evCutoff(6),'street');
+      if(s6.length>=MIN_COMPS){comps=s6;lookbackUsed=6;fallbackLevel='street';}
+      else{
+        const s12=queryComps(evCutoff(12),'street');
+        if(s12.length>=MIN_COMPS){comps=s12;lookbackUsed=12;fallbackLevel='street';}
+        else{
+          const best=Math.max(queryComps(evCutoff(12),'block').length,queryComps(evCutoff(12),'street').length);
+          return{type:'no_data',count:best,town,flatType,street,block,size:mySize,leaseYear};
+        }
+      }
+    }
+  }
+
+  const compsWithFloor=comps.map(r=>({...r,price:Number(r.resale_price),size:Number(r.floor_area_sqm),floorMid:parseStoreyMid(r.storey_range),floorLow:storeyRangeLow(r.storey_range),psf:Number(r.resale_price)/(Number(r.floor_area_sqm)*10.764)})).filter(r=>r.floorMid!==null);
+  if(compsWithFloor.length<2) return{type:'no_floor_data',comps:compsWithFloor.length};
+
+  const n=compsWithFloor.length;
+  const sumX=compsWithFloor.reduce((s,r)=>s+r.floorMid,0);
+  const sumY=compsWithFloor.reduce((s,r)=>s+r.psf,0);
+  const sumXY=compsWithFloor.reduce((s,r)=>s+r.floorMid*r.psf,0);
+  const sumX2=compsWithFloor.reduce((s,r)=>s+r.floorMid*r.floorMid,0);
+  const denom=n*sumX2-sumX*sumX;
+  let floorPrem=0;
+  if(denom!==0){const bPsf=(n*sumXY-sumX*sumY)/denom;floorPrem=bPsf*mySize*10.764;}
+  floorPrem=Math.max(0,Math.min(3000,floorPrem));
+
+  const refComp=compsWithFloor.reduce((best,r)=>Math.abs(r.floorMid-myFloor)<Math.abs(best.floorMid-myFloor)?r:best,compsWithFloor[0]);
+  const refAnchor=refComp.floorLow!==null?refComp.floorLow:refComp.floorMid;
+  const basePrice=refComp.psf*mySize*10.764;
+  const adjustedPrice=basePrice+(myFloor-refAnchor)*floorPrem;
+
+  const lowerComps=compsWithFloor.filter(r=>r.floorMid<=myFloor);
+  let priceLow;
+  if(lowerComps.length>0){const bl=lowerComps.reduce((a,b)=>a.price>b.price?a:b);const la=bl.floorLow!==null?bl.floorLow:bl.floorMid;priceLow=bl.price+Math.max(0,myFloor-la)*floorPrem;}
+  else{const lc=compsWithFloor.reduce((a,b)=>a.floorMid<b.floorMid?a:b);const la=lc.floorLow!==null?lc.floorLow:lc.floorMid;priceLow=lc.price-Math.max(0,la-myFloor)*floorPrem;priceLow=Math.max(priceLow,lc.price*0.85);}
+
+  const high=compsWithFloor.reduce((a,b)=>a.price>b.price?a:b);
+  let priceHigh;
+  if(myFloor>=high.floorMid){priceHigh=Math.max(adjustedPrice,high.price);}
+  else{const ha=high.floorLow!==null?high.floorLow:high.floorMid;priceHigh=high.price-Math.max(0,ha-myFloor)*floorPrem;priceHigh=Math.max(priceHigh,high.price*0.7);}
+
+  priceLow=Math.min(priceLow,priceHigh);
+  priceLow=Math.round(priceLow/1000)*1000;
+  priceHigh=Math.round(priceHigh/1000)*1000;
+  if(priceLow===priceHigh)priceLow=Math.round(priceHigh*0.98/1000)*1000;
+  const adjusted=Math.round(adjustedPrice/1000)*1000;
+  const psfLow=Math.round(priceLow/(mySize*10.764));
+  const psfHigh=Math.round(priceHigh/(mySize*10.764));
+
+  return{type:'ok',priceLow,priceHigh,adjusted,psfLow,psfHigh,floorPrem:Math.round(floorPrem),comps:compsWithFloor.length,compsData:compsWithFloor,lookbackUsed,fallbackLevel,refComp,town,flatType,street,block,floor:myFloor,size:mySize};
+}
+
+// ── TRANSACTION SEARCH ──
+function searchTransactions(params){
+  const {town,flatType,flatTypes,street,block,storeyFilter,maxPrice,minPrice,sort,leaseYears}=params;
+  const cutoff=evCutoff(6);
+  // Flat types: support both single flatType and multi flatTypes array
+  const ftSet=flatTypes&&flatTypes.length?new Set(flatTypes):(flatType?new Set([flatType]):null);
+
+  function filter(recs,useCutoff){
+    return recs.filter(r=>{
+      if(useCutoff&&r.month<cutoff)return false;
+      if(town&&r.town!==town)return false;
+      if(ftSet&&ftSet.size&&!ftSet.has(r.flat_type))return false;
+      if(street&&!r.street_name.toUpperCase().includes(street.toUpperCase().slice(0,8)))return false;
+      if(block&&r.block.toUpperCase()!==block.toUpperCase())return false;
+      if(storeyFilter&&storeyFilter.length&&!storeyFilter.includes(r.storey_range))return false;
+      if(maxPrice&&Number(r.resale_price)>maxPrice)return false;
+      if(minPrice&&Number(r.resale_price)<minPrice)return false;
+      if(leaseYears&&leaseYears.length&&!leaseYears.includes(parseInt(r.lease_commence_date)))return false;
+      return true;
+    });
+  }
+
+  let recs=filter(DB.resale,true);
+  // If less than 5 in 6 months, try full dataset
+  if(recs.length<5)recs=filter(DB.resale,false);
+
+  if(sort==='asc')recs.sort((a,b)=>Number(a.resale_price)-Number(b.resale_price));
+  else if(sort==='desc')recs.sort((a,b)=>Number(b.resale_price)-Number(a.resale_price));
+  else recs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+  return recs;
+}
+
+// ── QUERY PARSER ──
+const TOWNS=['ANG MO KIO','BEDOK','BISHAN','BUKIT BATOK','BUKIT MERAH','BUKIT PANJANG','BUKIT TIMAH','CENTRAL AREA','CHOA CHU KANG','CLEMENTI','GEYLANG','HOUGANG','JURONG EAST','JURONG WEST','KALLANG/WHAMPOA','MARINE PARADE','PASIR RIS','PUNGGOL','QUEENSTOWN','SEMBAWANG','SENGKANG','SERANGOON','TAMPINES','TOA PAYOH','WOODLANDS','YISHUN'];
+const FLAT_MAP={'1-ROOM':'1 ROOM','2-ROOM':'2 ROOM','3-ROOM':'3 ROOM','4-ROOM':'4 ROOM','5-ROOM':'5 ROOM','1RM':'1 ROOM','2RM':'2 ROOM','3RM':'3 ROOM','4RM':'4 ROOM','5RM':'5 ROOM','EXEC':'EXECUTIVE','EXECUTIVE':'EXECUTIVE','1 ROOM':'1 ROOM','2 ROOM':'2 ROOM','3 ROOM':'3 ROOM','4 ROOM':'4 ROOM','5 ROOM':'5 ROOM'};
+const TYPICAL_SIZE={'1 ROOM':33,'2 ROOM':45,'3 ROOM':68,'4 ROOM':93,'5 ROOM':113,'EXECUTIVE':144,'MULTI-GENERATION':155};
+
+// ── Singlish / phonetic fuzzy town matching ──
+const TOWN_ALIASES={
+  'CLEMENTI':['CLEMENTE','CLEMENTY','CLEMENT','CLEMEN','KLIMENTI'],
+  'ANG MO KIO':['ANG MO KEO','ANGMOKIO','AMK','ANG MO KION'],
+  'TOA PAYOH':['TOA PAYO','TOAPAYOH','TOA PAY OH'],
+  'KALLANG/WHAMPOA':['KALLANG','WHAMPOA','KALLANG WHAMPOA'],
+  'CHOA CHU KANG':['CHOA CHU KENG','CCK','CHUA CHU KANG'],
+  'BUKIT TIMAH':['BUKIT TIMA','BUKIT TEMAH','BUKIT TIMAH'],
+  'BUKIT BATOK':['BUKIT BATOH'],
+  'QUEENSTOWN':['QUEENS TOWN'],
+  'PASIR RIS':['PASIR RISE'],
+  'JURONG EAST':['JURONG EST'],
+  'CENTRAL AREA':['CENTRAL AREA','CITY HALL','TANJONG PAGAR'],
+  'BUKIT MERAH':['BUKIT MERA','BUKIT MEREH'],
+};
+
+function fuzzyMatchTown(q){
+  const uq=q.toUpperCase();
+  for(const t of TOWNS){if(uq.includes(t))return t;}
+  for(const[town,aliases]of Object.entries(TOWN_ALIASES)){if(aliases.some(a=>uq.includes(a)))return town;}
+  // Partial word match — at least 5 chars
+  for(const t of TOWNS){const words=t.split(' ');if(words.some(w=>w.length>=5&&uq.includes(w)))return t;}
+  return null;
+}
+
+// ── DB size lookup — most common sqm for block+flatType from full 5yr dataset ──
+function lookupSizeFromDB(block,street,flatType){
+  if(!DB.loaded||!block||!flatType)return null;
+  const s=street?street.toUpperCase():'';
+  const matches=DB.resale.filter(r=>{
+    return r.block===block&&r.flat_type===flatType&&Number(r.floor_area_sqm)>0&&
+      (!s||r.street_name.toUpperCase().includes(s.slice(0,8)));
+  });
+  if(!matches.length)return null;
+  const freq={};
+  matches.forEach(r=>{const v=Number(r.floor_area_sqm);freq[v]=(freq[v]||0)+1;});
+  return Number(Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0]);
+}
+
+// ── Street abbreviation handler ──
+// DB stores SHORT form: ST, AVE, DR, RD, CL, CRES, LOR, JLN, BT, UPP etc
+// Users may type EITHER form — we normalise to DB short form before searching
+
+// Converts user input (long or short) → DB short form for searching
+function contractStreetAbbr(s){
+  return s
+    .replace(/\bSTREET\b/g,'ST')
+    .replace(/\bAVENUE\b/g,'AVE')
+    .replace(/\bDRIVE\b/g,'DR')
+    .replace(/\bROAD\b/g,'RD')
+    .replace(/\bCLOSE\b/g,'CL')
+    .replace(/\bCRESCENT\b/g,'CRES')
+    .replace(/\bLORONG\b/g,'LOR')
+    .replace(/\bJALAN\b/g,'JLN')
+    .replace(/\bBUKIT\b/g,'BT')
+    .replace(/\bUPPER\b/g,'UPP')
+    .replace(/\bHEIGHTS\b/g,'HTS')
+    .replace(/\bNORTH\b/g,'NTH')
+    .replace(/\bSOUTH\b/g,'STH')
+    .replace(/\bCENTRAL\b/g,'CTRL')
+    .replace(/\bTERRACE\b/g,'TER')
+    .replace(/\bPLACE\b/g,'PL')
+    .replace(/\bGROVE\b/g,'GR')
+    .replace(/\s+/g,' ').trim();
+}
+
+// Converts DB short form → full English for TTS (so Harvey doesn't say "ess tee")
+function expandStreetAbbr(s){
+  return s
+    .replace(/\bST\b/g,'STREET')
+    .replace(/\bAVE\b/g,'AVENUE')
+    .replace(/\bDR\b/g,'DRIVE')
+    .replace(/\bRD\b/g,'ROAD')
+    .replace(/\bCL\b/g,'CLOSE')
+    .replace(/\bCRES\b/g,'CRESCENT')
+    .replace(/\bLOR\b/g,'LORONG')
+    .replace(/\bJLN\b/g,'JALAN')
+    .replace(/\bBT\b/g,'BUKIT')
+    .replace(/\bUPP\b/g,'UPPER')
+    .replace(/\bHTS\b/g,'HEIGHTS')
+    .replace(/\bNTH\b/g,'NORTH')
+    .replace(/\bSTH\b/g,'SOUTH')
+    .replace(/\bCTRL\b/g,'CENTRAL')
+    .replace(/\bTER\b/g,'TERRACE')
+    .replace(/\bPL\b/g,'PLACE')
+    .replace(/\bGR\b/g,'GROVE')
+    .replace(/\s+/g,' ').trim();
+}
+
+
+// ── Reverse street → canonical DB town + street + blocks ──
+// Supports: full name, abbreviated (ST/DR/CL/AVE/RD/CRES), partial, slight misspelling
+function reverseStreet(streetRaw){
+  if(!DB.loaded||!streetRaw)return null;
+
+  // Contract long→short so "Street"→"ST", "Avenue"→"AVE" etc matches DB format
+  let s=contractStreetAbbr(streetRaw.toUpperCase().trim())
+    .replace(/\bBLOCK\s*\d+[A-Z]?\s*/g,'').replace(/\bBLK\s*\d+[A-Z]?\s*/g,'')
+    .replace(/\s+/g,' ').trim();
+  const sOrig=streetRaw.toUpperCase().trim()
+    .replace(/\bBLK\s*\d+[A-Z]?\s*/g,'').replace(/\s+/g,' ').trim();
+
+  // S1: exact match
+  let m=DB.resale.filter(r=>r.street_name&&r.street_name.toUpperCase()===s);
+  if(m.length)return _srResult(m);
+  if(sOrig!==s){
+    m=DB.resale.filter(r=>r.street_name&&r.street_name.toUpperCase()===sOrig);
+    if(m.length)return _srResult(m);
+  }
+
+  // Extract HARD constraints from the input:
+  // 1) Street TYPE (ST / AVE / DR / RD / CL etc) — must match exactly, no crossing AVE↔ST
+  // 2) Trailing NUMBER (1, 22, 44A) — must match exactly
+  const shortTypes=['ST','AVE','DR','RD','CL','CRES','LOR','JLN','BT','UPP','HTS','NTH','STH','CTRL','TER','PL','GR','LN','WALK','LINK','RISE','VIEW','WAY'];
+  const typeRxStr=shortTypes.join('|');
+  const typeRx=new RegExp(`\\b(${typeRxStr})\\b`,'g');
+  const typeMatches=[...s.matchAll(typeRx)];
+  // Use the LAST type keyword found (e.g. "CLEMENTI WEST ST 1" → "ST")
+  const streetType=typeMatches.length?typeMatches[typeMatches.length-1][1]:null;
+  const numMatch=s.match(/\s(\d+[A-Z]?)$/);
+  const streetNum=numMatch?numMatch[1]:null;
+
+  // Strip type words AND numbers to get pure name words
+  const stripRx=new RegExp(`\\b(${typeRxStr}|STREET|AVENUE|DRIVE|ROAD|CLOSE|CRESCENT|LANE|PLACE|HEIGHTS|GROVE|TERRACE|NORTH|SOUTH|EAST|WEST|CENTRAL|UPPER|LOWER|LORONG|JALAN|BUKIT|NEW|OLD)\\b`,'g');
+  const nameOnly=s.replace(stripRx,'').replace(/\d+[A-Z]?/g,'').replace(/\s+/g,' ').trim();
+  const nameWords=nameOnly.split(' ').filter(w=>w.length>=3);
+
+  // Candidate validation — HARD: type AND number must both match
+  function ok(dbName){
+    const up=dbName.toUpperCase();
+    if(streetNum){const n=up.match(/\s(\d+[A-Z]?)$/);if(!n||n[1]!==streetNum)return false;}
+    if(streetType){const t=[...up.matchAll(typeRx)];if(!t.length||t[t.length-1][1]!==streetType)return false;}
+    return true;
+  }
+
+  // S2: name word scoring with hard constraints
+  if(nameWords.length){
+    const sc=[];const seen=new Set();
+    for(const r of DB.resale){
+      if(!r.street_name||seen.has(r.street_name))continue;seen.add(r.street_name);
+      if(!ok(r.street_name))continue;
+      const up=r.street_name.toUpperCase();
+      const score=nameWords.filter(w=>up.includes(w)).length;
+      if(score>0)sc.push({score,street:r.street_name});
+    }
+    sc.sort((a,b)=>b.score-a.score);
+    if(sc.length){m=DB.resale.filter(r=>r.street_name===sc[0].street);if(m.length)return _srResult(m);}
+  }
+
+  // S3: fuzzy (1-char typo) with same hard constraints
+  const fw=s.replace(/\d+[A-Z]?/g,'').split(' ').filter(w=>w.length>=4&&!new RegExp(`^(${typeRxStr})$`).test(w));
+  if(fw.length){
+    const sc2=[];const seen2=new Set();
+    for(const r of DB.resale){
+      if(!r.street_name||seen2.has(r.street_name))continue;seen2.add(r.street_name);
+      if(!ok(r.street_name))continue;
+      const up=r.street_name.toUpperCase();
+      const score=fw.filter(w=>up.includes(w)||_fuzzyWord(up,w)).length;
+      if(score>0)sc2.push({score,street:r.street_name});
+    }
+    sc2.sort((a,b)=>b.score-a.score);
+    if(sc2.length){m=DB.resale.filter(r=>r.street_name===sc2[0].street);if(m.length)return _srResult(m);}
+  }
+
+  // S4: relax number (user may have omitted it) but KEEP type constraint
+  if(streetType&&nameWords.length){
+    const sc3=[];const seen3=new Set();
+    for(const r of DB.resale){
+      if(!r.street_name||seen3.has(r.street_name))continue;seen3.add(r.street_name);
+      const up=r.street_name.toUpperCase();
+      const t=[...up.matchAll(typeRx)];if(!t.length||t[t.length-1][1]!==streetType)continue;
+      const score=nameWords.filter(w=>up.includes(w)).length;
+      if(score>0)sc3.push({score,street:r.street_name});
+    }
+    sc3.sort((a,b)=>b.score-a.score);
+    if(sc3.length){m=DB.resale.filter(r=>r.street_name===sc3[0].street);if(m.length)return _srResult(m);}
+  }
+
+  return null;
+}
+function _fuzzyWord(haystack,needle){
+  if(needle.length<4)return false;
+  for(let i=0;i<=haystack.length-needle.length+1;i++){
+    const chunk=haystack.slice(i,i+needle.length);
+    let diff=0;for(let j=0;j<needle.length;j++)if(chunk[j]!==needle[j])diff++;
+    if(diff<=1)return true;
+  }
+  return false;
+}
+function _srResult(matches){
+  return{town:matches[0].town,street:matches[0].street_name,blocks:[...new Set(matches.map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b))};
+}
+
+
+
+// ── Block+street → canonical town ──
+function reverseTown(block,streetRaw){
+  if(!DB.loaded)return null;
+  const core=(streetRaw||'').toUpperCase().replace(/\b(STREET|ROAD|AVENUE|DRIVE|CRESCENT|CLOSE|WALK|LINK|LANE|WAY|ST|RD|AVE|DR|CRES|LN)\b/g,'').replace(/\s+/g,' ').trim();
+  const match=DB.resale.find(r=>(!block||r.block===block)&&(!core||r.street_name.toUpperCase().includes(core.slice(0,6))));
+  return match?{town:match.town,street:match.street_name}:null;
+}
+
+function parseQuery(raw){
+  const q=raw.toUpperCase();const res={};
+  const town=fuzzyMatchTown(q);if(town)res.town=town;
+  for(const[a,v]of Object.entries(FLAT_MAP)){if(q.includes(a)){res.flatType=v;break}}
+  // Block — explicit BLK/BLOCK prefix, or standalone 3-4 digit number that isn't a price/sqm/year
+  const blk=q.match(/\bBLK\s*(\d+[A-Z]?)\b|\bBLOCK\s*#?\s*(\d+[A-Z]?)\b/);
+  if(blk) res.block=(blk[1]||blk[2]).trim();
+  // Standalone block number: 3-4 digits at start of input or after space, not preceded by $ or floor/level keywords
+  if(!res.block){
+    const words=q.split(/\s+/);
+    for(const w of words){
+      if(/^\d{3,4}[A-Z]?$/.test(w)){
+        // Not a year (1900-2025), not a size (unlikely to be 3-digit standalone but check context)
+        const n=parseInt(w);
+        if(!(n>=1960&&n<=2025)&&!(n>=50&&n<=200)){res.block=w;break;}
+      }
+    }
+  }
+  // Floor — floor/level/storey/lvl keyword, also "unit's level" (normalised to "floor" already)
+  const fl=raw.match(/(?:floor|level|storey|flr|lvl)\s*#?\s*(\d+)|(\d+)\s*(?:st|nd|rd|th)\s*(?:floor|storey|level|flr)/i);
+  if(fl) res.floor=Number(fl[1]||fl[2]);
+  // If block and floor both resolved to same number, floor wins — clear block
+  if(res.block&&res.floor&&String(res.floor)===String(res.block)&&res.street){res.block='';}
+
+  // Size — explicit sqm keyword
+  const sz=raw.match(/(\d+)\s*(?:sqm|sq\.?m\b|m2|square\s*m)/i);
+  if(sz)res.size=Number(sz[1]);
+  // Lease year
+  const ly=raw.match(/(?:built|lease|commenced?|lease\s*start|year\s*built)\s*(?:year\s*)?(\d{4})|(\d{4})\s*(?:built|lease|commenced?)/i);
+  if(ly)res.leaseYear=Number(ly[1]||ly[2]);
+  // Street — strip leading block number first, then match full street name
+  // Handle: "608 Clementi West Street 1" → "Clementi West Street 1"
+  // Also handle abbreviations: ST, DR, CL, AVE, RD, CRES etc
+  const qNoBlock=q.replace(/^\s*(?:BLK|BLOCK)?\s*\d+[A-Z]?\s*/,'').trim();
+  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN)\s*\d*[A-Z]?)\b/);
+  if(stMatch){
+    let candidate=stMatch[1].trim()
+      .replace(/^\s*(?:BLK|BLOCK)\s*\d+[A-Z]?\s*/i,'')
+      .replace(/\s+/g,' ').trim();
+    if(candidate.length>3) res.street=candidate;
+  }
+  // Fallback: if no street suffix found, try reverseStreet on the whole input minus block/floor/flattype
+  if(!res.street){
+    // Build a candidate by stripping known non-street tokens
+    let streetCandidate=q
+      .replace(/\b(?:BLK|BLOCK)\s*\d+[A-Z]?\b/g,'')
+      .replace(/\b(?:FLOOR|LEVEL|STOREY|FLR|LVL)\s*\d+\b/g,'')
+      .replace(/\b\d+\s*(?:ROOM|RM|SQM|M2)\b/g,'')
+      .replace(/\b(?:EXECUTIVE|EXEC|ESTIMATE|VALUE|SEARCH|RECENT|FIND|SHOW)\b/g,'')
+      .replace(/\s+/g,' ').trim();
+    if(streetCandidate.length>4&&DB.loaded){
+      const found=reverseStreet(streetCandidate);
+      if(found) res.street=found.street;
+    }
+  }
+  // Price
+  const u=raw.match(/(?:under|below|less|max|<)\s*\$?([\d,]+)k?/i);
+  if(u){let v=parseInt(u[1].replace(/,/g,''));if(/k/i.test(u[0])||v<10000)v*=1000;res.maxPrice=v;}
+  const o=raw.match(/(?:above|over|more|min|>)\s*\$?([\d,]+)k?/i);
+  if(o){let v=parseInt(o[1].replace(/,/g,''));if(/k/i.test(o[0])||v<10000)v*=1000;res.minPrice=v;}
+  if(/cheap|lowest|affordable/i.test(raw))res.sort='asc';
+  if(/expensive|highest|top price/i.test(raw))res.sort='desc';
+  res.isEV=/valuat|estimate|worth|value|how much|price of|check value|ev\b/i.test(raw);
+  return res;
+}
+
+// ── Enrich ctx: reverse lookups + DB size from actual block records ──
+function enrichCtx(ctx){
+  // Street → town + canonical name
+  if(ctx.street&&!ctx.town){
+    const f=reverseStreet(ctx.street);
+    if(f){ctx.town=f.town;ctx.street=f.street;if(!ctx.block&&f.blocks.length===1)ctx.block=f.blocks[0];}
+  }
+  // Block+street → town
+  if((ctx.block||ctx.street)&&!ctx.town){
+    const f=reverseTown(ctx.block,ctx.street);
+    if(f){ctx.town=f.town;if(!ctx.street)ctx.street=f.street;}
+  }
+  // Town+block → canonical street
+  if(ctx.block&&ctx.town&&!ctx.street){
+    const m=DB.resale.find(r=>r.block===ctx.block&&r.town===ctx.town);
+    if(m)ctx.street=m.street_name;
+  }
+  // Size: 1) user specified 2) DB block lookup 3) typical fallback
+  if(!ctx.size&&ctx.block&&ctx.flatType){
+    const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);
+    if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}
+  }
+  if(!ctx.size&&ctx.flatType){ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}
+  // Lease year: auto-lookup from DB if not provided — use most common lease year for this block+flatType
+  if(!ctx.leaseYear&&ctx.block&&ctx.flatType){
+    const lys=getLeaseYearsForBlock(ctx.block,ctx.street,ctx.flatType);
+    if(lys.length===1){ctx.leaseYear=lys[0];ctx.leaseYearFromDB=true;}
+    else if(lys.length>1){
+      // Pick the most common lease year for this block
+      const freq={};
+      DB.resale.filter(r=>r.block===ctx.block&&r.flat_type===ctx.flatType&&r.lease_commence_date)
+        .forEach(r=>{const y=parseInt(r.lease_commence_date);if(y)freq[y]=(freq[y]||0)+1;});
+      const top=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0];
+      if(top){ctx.leaseYear=Number(top[0]);ctx.leaseYearFromDB=true;ctx.leaseYearMultiple=lys;}
+    }
+  }
+  return ctx;
+}
+
+function buildMissingPrompt(ctx){
+  const m=[];
+  if(!ctx.town)    m.push('📍 <strong>Town</strong> — e.g. Clementi, Tampines <em>(I can find from street)</em>');
+  if(!ctx.flatType)m.push('🏠 <strong>Flat type</strong> — 3-room, 4-room, 5-room or Executive');
+  if(!ctx.street)  m.push('🛣️ <strong>Street name</strong> — e.g. Clementi West Street 1');
+  if(!ctx.block)   m.push('🔢 <strong>Block number</strong> — e.g. Blk 608');
+  if(!ctx.floor)   m.push('📶 <strong>Floor level</strong> — e.g. floor 4');
+  if(!ctx.size&&!ctx.flatType)m.push('📐 <strong>Floor area sqm</strong> — e.g. 67 sqm <em>(optional if flat type given)</em>');
+  return m;
+}
+function buildSearchMissingPrompt(ctx){
+  const m=[];
+  if(!ctx.town&&!ctx.street&&!ctx.block)m.push('📍 <strong>Town or street</strong> — e.g. Clementi, or Clementi West Street 1');
+  if(!ctx.flatType)m.push('🏠 <strong>Flat type</strong> — e.g. 3-room <em>(optional)</em>');
+  return m;
+}
+
+// ── Build resale SEARCH HUD form (mirrors BlockSense Transaction Search tab) ──
+function buildSearchForm(ctx){
+  const fid='sf-'+Date.now();
+  const town=ctx.town||'';
+  const street=ctx.street||'';
+  const block=ctx.block||'';
+  const flatType=ctx.flatType||'';
+
+  const towns=TOWNS;
+  const streets=town?getStreetsForTown(town):(street?[street]:[]);
+  const blocks=getBlocksForStreet(street,town,flatType);
+  const storeyBands=['01 TO 03','04 TO 06','07 TO 09','10 TO 12','13 TO 15','16 TO 18','19 TO 21','22 TO 24','25 TO 27','28 TO 30','31 TO 33','34 TO 36','37 TO 39','40 TO 42','43 TO 45','46 TO 48','49 TO 51'];
+  const flatTypes=['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'];
+  const leaseYrs=getLeaseYearsForBlock(block,street,flatType);
+
+  const opt=(val,label,sel)=>`<option value="${val}"${sel?' selected':''}>${label}</option>`;
+
+  // Multi-select helper renders as a scrollable list of checkboxes
+  function multiSelect(id,options,selected=[]){
+    return `<div style="background:var(--t4);border:1px solid var(--b2);max-height:80px;overflow-y:auto;padding:4px 0">
+      ${options.map(o=>`<label style="display:flex;align-items:center;gap:6px;padding:2px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--t2)">
+        <input type="checkbox" value="${o}" ${selected.includes(o)?'checked':''} style="accent-color:var(--c)"> ${o}
+      </label>`).join('')}
+    </div>`;
+  }
+
+  const html=`<div class="hud-form" id="${fid}">
+  <div class="hud-row">
+    <span class="hud-label">📍 TOWN</span>
+    <select class="hud-select" id="${fid}-town" onchange="sfCascade('${fid}')">
+      <option value="">— all towns —</option>${towns.map(t=>opt(t,t,t===town)).join('')}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">🛣️ STREET</span>
+    <select class="hud-select" id="${fid}-street" onchange="sfCascade('${fid}')">
+      <option value="">— all streets —</option>${streets.map(s=>opt(s,s,s===street)).join('')}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">🔢 BLOCK</span>
+    <select class="hud-select" id="${fid}-block">
+      <option value="">— all blocks —</option>${blocks.map(b=>opt(b,'Blk '+b,b===block)).join('')}
+    </select>
+  </div>
+  <div class="hud-row" style="align-items:flex-start">
+    <span class="hud-label" style="margin-top:4px">🏠 FLAT TYPE</span>
+    <div>${multiSelect(fid+'-ft',flatTypes,flatType?[flatType]:[])}</div>
+  </div>
+  <div class="hud-row" style="align-items:flex-start">
+    <span class="hud-label" style="margin-top:4px">📶 STOREY</span>
+    <div>${multiSelect(fid+'-storey',storeyBands,[])}</div>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">💰 PRICE MIN</span>
+    <input class="hud-input" type="number" id="${fid}-pmin" placeholder="e.g. 300000" style="width:110px">
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">💰 PRICE MAX</span>
+    <input class="hud-input" type="number" id="${fid}-pmax" placeholder="e.g. 800000" style="width:110px">
+  </div>
+  ${leaseYrs.length?`<div class="hud-row" style="align-items:flex-start">
+    <span class="hud-label" style="margin-top:4px">🗓️ LEASE YEAR</span>
+    <div>${multiSelect(fid+'-ly',leaseYrs.map(String),[])}</div>
+  </div>`:''}
+  <div class="hud-row">
+    <span class="hud-label">🔢 SORT</span>
+    <select class="hud-select" id="${fid}-sort" style="min-width:160px">
+      <option value="">Recent first</option>
+      <option value="asc">Cheapest first</option>
+      <option value="desc">Most expensive first</option>
+    </select>
+  </div>
+  <div class="hud-divider"></div>
+  <div class="hud-row">
+    <button class="hud-submit" onclick="sfSubmit('${fid}')">⬡ SEARCH TRANSACTIONS</button>
+    <button class="hud-submit" style="background:var(--t3);color:var(--t2)" onclick="sfCopy('${fid}')">📋 COPY AS TEXT</button>
+  </div>
+</div>`;
+  return html;
+}
+
+function sfCascade(fid){
+  const town=document.getElementById(fid+'-town')?.value||'';
+  const street=document.getElementById(fid+'-street')?.value||'';
+  if(town){
+    const streets=getStreetsForTown(town);
+    const el=document.getElementById(fid+'-street');
+    if(el){const cur=el.value;el.innerHTML=`<option value="">— all streets —</option>`+streets.map(s=>`<option value="${s}"${s===cur?' selected':''}>${s}</option>`).join('');}
+  }
+  if(town||street){
+    const blocks=getBlocksForStreet(street,town,'');
+    const el=document.getElementById(fid+'-block');
+    if(el){const cur=el.value;el.innerHTML=`<option value="">— all blocks —</option>`+blocks.map(b=>`<option value="${b}"${b===cur?' selected':''}>Blk ${b}</option>`).join('');}
+  }
+}
+
+function sfSubmit(fid){
+  const town=document.getElementById(fid+'-town')?.value||'';
+  const street=document.getElementById(fid+'-street')?.value||'';
+  const block=document.getElementById(fid+'-block')?.value||'';
+  const fts=[...document.querySelectorAll(`#${fid} input[type=checkbox]:checked`)].filter(c=>['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'].includes(c.value)).map(c=>c.value);
+  const storeys=[...document.querySelectorAll(`#${fid} input[type=checkbox]:checked`)].filter(c=>c.value.includes('TO')).map(c=>c.value);
+  const pmin=Number(document.getElementById(fid+'-pmin')?.value)||0;
+  const pmax=Number(document.getElementById(fid+'-pmax')?.value)||0;
+  const sort=document.getElementById(fid+'-sort')?.value||'';
+  const lys=[...document.querySelectorAll(`#${fid} input[type=checkbox]:checked`)].filter(c=>/^\d{4}$/.test(c.value)).map(c=>Number(c.value));
+
+  ctx={isEV:false,town,street,block,flatType:fts.length===1?fts[0]:'',flatTypes:fts,storeyFilter:storeys,minPrice:pmin||undefined,maxPrice:pmax||undefined,sort,leaseYears:lys};
+  const summary=[block?'Blk '+block:'',street||town||'',fts.join('/')].filter(Boolean).join(' · ');
+  userMsg('Search: '+summary);
+  mode='srch_waiting';
+  runSearch();
+}
+
+function sfCopy(fid){
+  const town=document.getElementById(fid+'-town')?.value||'';
+  const street=document.getElementById(fid+'-street')?.value||'';
+  const block=document.getElementById(fid+'-block')?.value||'';
+  const fts=[...document.querySelectorAll(`#${fid} input[type=checkbox]:checked`)].filter(c=>['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE','MULTI-GENERATION'].includes(c.value)).map(c=>c.value);
+  const txt=[block?'block '+block:'',street||'',fts[0]||'',town||''].filter(Boolean).join(' ');
+  navigator.clipboard?.writeText(txt).catch(()=>{});
+  ciEl.value=txt;ciEl.style.height='auto';ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';ciEl.focus();
+}
+
+// ── EV Expansion panel — widen search to nearby blocks/streets + more years ──
+function buildEvExpansionPanel(params){
+  const fid='evx-'+Date.now();
+  // Get nearby streets in same town
+  const nearbyStreets=params.town?getStreetsForTown(params.town).filter(s=>s!==params.street).slice(0,12):[];
+
+  const html=`<div class="hud-form" id="${fid}" style="margin-top:8px">
+  <div style="font-family:var(--mono);font-size:9px;color:var(--t2);letter-spacing:1px;margin-bottom:8px">
+    ⬡ EXPAND SEARCH SCOPE — toggle options below to widen the estimate:
+  </div>
+
+  <div style="font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;margin-bottom:4px">── NEARBY BLOCKS / STREETS ──</div>
+  <div class="hud-row" style="align-items:center;gap:10px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--t2)">
+      <input type="checkbox" id="${fid}-samestreet" style="accent-color:var(--c)">
+      <span>ALL BLOCKS IN <strong style="color:var(--c)">${esc(params.street||'SAME STREET')}</strong></span>
+    </label>
+  </div>
+  ${nearbyStreets.length?`<div class="hud-row" style="align-items:flex-start;margin-top:4px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--t2);flex-shrink:0">
+      <input type="checkbox" id="${fid}-nearbystreet" style="accent-color:var(--c)">
+      <span>NEARBY STREETS IN ${esc(params.town||'')}:</span>
+    </label>
+  </div>
+  <div style="background:var(--t4);border:1px solid var(--b2);max-height:70px;overflow-y:auto;padding:4px 0;margin-top:4px">
+    ${nearbyStreets.map(s=>`<label style="display:flex;align-items:center;gap:6px;padding:2px 8px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
+      <input type="checkbox" class="${fid}-ns" value="${s}" style="accent-color:var(--c)"> ${s}
+    </label>`).join('')}
+  </div>`:''}
+
+  <div style="font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;margin:10px 0 4px">── EXTEND DATE RANGE ── <em style="color:var(--a)">(backdated — use with caution)</em></div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px">
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
+      <input type="radio" name="${fid}-yr" value="2" style="accent-color:var(--a)"> <span style="color:var(--a)">2 YRS <em>(backdated)</em></span>
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
+      <input type="radio" name="${fid}-yr" value="3" style="accent-color:var(--a)"> <span style="color:var(--a)">3 YRS <em>(backdated)</em></span>
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
+      <input type="radio" name="${fid}-yr" value="4" style="accent-color:var(--r)"> <span style="color:var(--r)">4 YRS <em>(backdated)</em></span>
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
+      <input type="radio" name="${fid}-yr" value="5" style="accent-color:var(--r)"> <span style="color:var(--r)">5 YRS <em>(backdated)</em></span>
+    </label>
+  </div>
+
+  <div class="hud-divider" style="margin-top:10px"></div>
+  <div class="hud-row">
+    <button class="hud-submit" onclick="evxSubmit('${fid}')">⬡ RUN EXPANDED ESTIMATE</button>
+  </div>
+  <div id="${fid}-badge" style="font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:6px;min-height:12px"></div>
+</div>`;
+  return {html,fid};
+}
+
+function evxSubmit(fid){
+  const sameStreet=document.getElementById(fid+'-samestreet')?.checked;
+  const nearbyChecked=[...document.querySelectorAll(`.${fid}-ns:checked`)].map(c=>c.value);
+  const nearbyStreet=document.getElementById(fid+'-nearbystreet')?.checked;
+  const yrs=Number(document.querySelector(`input[name="${fid}-yr"]:checked`)?.value)||0;
+
+  // Build scope labels for display
+  const labels=[];
+  if(sameStreet)labels.push('BLOCKS IN SAME STREET');
+  if(nearbyStreet&&nearbyChecked.length)labels.push('NEARBY STREETS');
+  if(yrs>=2)labels.push(`${yrs}-YEAR BACKDATED`);
+
+  if(!labels.length){harveyMsg('Please select at least one expansion option, sir.');return;}
+
+  // Show badge
+  const badge=document.getElementById(fid+'-badge');
+  if(badge)badge.textContent='⬡ '+labels.join(' · ');
+
+  // Run expanded computation
+  const expanded={...ctx,_expanded:true,_sameStreet:sameStreet,_nearbyStreets:nearbyChecked,_years:yrs||12};
+  userMsg('Expand: '+labels.join(' + '));
+  runEvExpanded(expanded,labels);
+}
+
+async function runEvExpanded(p,labels){
+  loading=true;sbEl.disabled=true;
+  speak('Running expanded search, sir. Stand by.');
+  thinkingMsg();
+  await new Promise(r=>setTimeout(r,300));
+
+  const months=p._years*12;
+  const cutoff=evCutoff(months);
+  const MIN_COMPS=2;
+
+  // Gather all streets to search
+  const streetsToSearch=new Set();
+  if(p.street)streetsToSearch.add(p.street.toUpperCase());
+  if(p._sameStreet&&p.street)streetsToSearch.add(p.street.toUpperCase());
+  p._nearbyStreets.forEach(s=>streetsToSearch.add(s.toUpperCase()));
+
+  const comps=DB.resale.filter(r=>{
+    const inStreet=streetsToSearch.has(r.street_name.toUpperCase());
+    const typeOk=!p.flatType||r.flat_type===p.flatType;
+    const monthOk=r.month>=cutoff;
+    const sizeOk=!p.size||Math.abs(Number(r.floor_area_sqm)-p.size)<=5;
+    return inStreet&&typeOk&&monthOk&&sizeOk;
+  });
+
+  rmThinking();
+
+  if(!comps||comps.length<MIN_COMPS){
+    harveyMsg(`Still not enough data even with expanded scope, sir. ${comps.length} transaction${comps.length!==1?'s':''} found. This area has very low transaction volume.<br><br><strong style="color:var(--c)">Visit <a href="https://blocksense.estatrix.workers.dev" target="_blank" style="color:var(--c)">BlockSense</a> for the full dataset or <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">chat with us on WhatsApp</a>.</strong>`);
+    speak('Still not enough data even with expanded scope, sir.');
+    loading=false;sbEl.disabled=false;mode='menu';return;
+  }
+
+  // Build expanded result card with labels
+  const prices=comps.map(r=>Number(r.resale_price));
+  const sorted=[...prices].sort((a,b)=>a-b);
+  const median=sorted[Math.floor(sorted.length/2)];
+  const low=Math.round(median*0.95/1000)*1000;
+  const high=Math.round(median*1.05/1000)*1000;
+
+  const labelBadges=labels.map(l=>{
+    const isBack=l.includes('BACKDATED');
+    const isStreet=l.includes('STREET');
+    return `<span class="hud-badge" style="background:${isBack?'rgba(255,68,68,0.1)':'rgba(255,170,0,0.1)'};border-color:${isBack?'var(--r)':'var(--a)'};color:${isBack?'var(--r)':'var(--a)'}">${l}</span>`;
+  }).join(' ');
+
+  const shown=comps.slice(0,8);
+  const rows=shown.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
+
+  const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+  d.innerHTML=`<span class="mlbl">// EXPANDED ESTIMATE · ${labels.join(' · ')}</span>
+    <div class="ev-card">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${labelBadges}</div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t2);letter-spacing:1px;margin-bottom:8px">${esc(p.flatType||'ALL TYPES')} · ${comps.length} COMPS · LAST ${p._years} YR${p._years>1?'S':''}</div>
+      <div class="ev-range">
+        <div><div class="ev-price low">${fmtP(low)}</div><div class="ev-label">LOW EST.</div></div>
+        <div class="ev-arrow">──</div>
+        <div><div class="ev-price hi">${fmtP(high)}</div><div class="ev-label">HIGH EST.</div></div>
+      </div>
+      <div style="text-align:center;margin-bottom:10px"><div class="ev-price mid">${fmtP(median)}</div><div class="ev-label">MEDIAN OF COMPS</div></div>
+      <div class="rcard" style="margin-top:8px">
+        <div class="rh"><span class="rtitle">⬡ COMPARABLE TRANSACTIONS USED</span><span class="rcnt">${comps.length} COMPS · ${shown.length} SHOWN</span></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>
+      <div class="ev-meta" style="margin-top:8px">⚠ Expanded scope — treat as directional guide only. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat for accurate valuation →</a></div>
+    </div>`;
+  msgsEl.appendChild(d);bot();
+  speak(`Expanded estimate using ${comps.length} transactions. Median ${fmtP(median)}, range ${fmtP(low)} to ${fmtP(high)}, sir.`);
+  setTimeout(()=>harveyMsg('Anything else, sir?',[{label:'ESTIMATE ANOTHER',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]),1400);
+  mode='menu';loading=false;sbEl.disabled=false;
+}
+
+
+// ── RENDER ──
+function harveyMsg(html,chips=[]){
+  document.getElementById('welcome')?.remove();
+  const d=document.createElement('div');d.className='msg-ai';
+  const ch=chips.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${chips.map(c=>`<span class="chip" onclick="chipClick('${c.val.replace(/'/g,"\\'")}')">▶ ${c.label}</span>`).join('')}</div>`:'';
+  // Stop speech button — only if voice is on
+  const stopBtn=`<button class="stop-btn" onclick="stopSpeech()" title="Stop Harvey speaking">⏹ STOP</button>`;
+  d.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:8px;justify-content:space-between"><span>// HARVEY</span>${stopBtn}</span><div class="mbub">${html}${ch}</div>`;
+  msgsEl.appendChild(d);bot();
+}
+function userMsg(text){
+  document.getElementById('welcome')?.remove();
+  const d=document.createElement('div');d.className='msg-user';
+  d.innerHTML=`<div class="mbub">${esc(text)}</div>`;
+  msgsEl.appendChild(d);bot();
+  addRecent(text);qn++;document.getElementById('hnum').textContent=qn;
+}
+function thinkingMsg(){
+  const d=document.createElement('div');d.className='msg-ai';d.id='ti';
+  d.innerHTML=`<span class="mlbl">// HARVEY — SEARCHING</span><div class="mbub"><div class="typing"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div></div>`;
+  msgsEl.appendChild(d);bot();
+}
+function rmThinking(){document.getElementById('ti')?.remove()}
+function addRecent(text){
+  const empty=document.getElementById('rlist').querySelector('div[style]');if(empty)empty.remove();
+  const d=document.createElement('div');d.className='ritem';
+  d.innerHTML=`${esc(text.length>26?text.slice(0,26)+'…':text)}<span class="rp">▶</span><span class="rt">${new Date().toLocaleTimeString('en-SG',{hour12:false})}</span>`;
+  d.onclick=()=>chipClick(text);
+  document.getElementById('rlist').insertBefore(d,document.getElementById('rlist').firstChild);
+  if(document.getElementById('rlist').children.length>8)document.getElementById('rlist').lastChild.remove();
+}
+
+// ── SHOW TRANSACTIONS ──
+function showTransactions(recs,params,is6mo){
+  if(!recs||recs.length===0){
+    const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+    d.innerHTML=`<span class="mlbl">// NO TRANSACTIONS FOUND</span><div class="mbub">No transactions found, sir. Let me help you refine the search.</div>`;
+    msgsEl.appendChild(d);bot();
+    speak('No transactions found, sir. Let me show you the search options.');
+    setTimeout(()=>{
+      const formHtml=buildSearchForm(params);
+      harveyMsg(`Refine your search, sir — adjust filters and try again:<br><br>${formHtml}`,[
+        {label:'🔄 START OVER',val:'__restart__'},
+        {label:'📊 ESTIMATE VALUE INSTEAD',val:'estimate value'}
+      ]);
+      speak('Please adjust the filters and search again, sir.');
+      mode='srch_waiting';
+    },800);
+    return;
+  }
+  const prices=recs.map(r=>Number(r.resale_price));
+  const sorted=[...prices].sort((a,b)=>a-b);
+  const median=sorted[Math.floor(sorted.length/2)];
+  const shown=recs; // show ALL — no limit
+  const timeNote=is6mo?'last 6 months':'full dataset';
+  const rows=shown.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
+  const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+  d.innerHTML=`<span class="mlbl">// ${recs.length} TRANSACTION${recs.length!==1?'S':''} · ${timeNote.toUpperCase()}</span>
+    <div class="mbub">${recs.length} result${recs.length!==1?'s':''} — showing ${shown.length}${params.block?' for Blk '+params.block:''}${params.street?' on '+params.street:''}${params.town?' in '+params.town.charAt(0)+params.town.slice(1).toLowerCase():''}${params.flatType?' · '+params.flatType.toLowerCase():''}</div>
+    <div class="rwrap"><div class="rcard">
+      <div class="rh"><span class="rtitle">⬡ ${esc([(params.block?'BLK '+params.block:''),(params.street||''),(params.town||''),(params.flatType||'')].filter(Boolean).join(' · ').toUpperCase())}</span><span class="rcnt">${recs.length} RECORDS · ${timeNote.toUpperCase()}</span></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+    <div class="srow">
+      <div class="sc"><span class="svv">${fmtP(median)}</span><span class="sll">MEDIAN</span></div>
+      <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
+      <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
+    </div></div>`;
+  msgsEl.appendChild(d);bot();
+  speak(`${recs.length} transaction${recs.length!==1?'s':''} found, sir. Median price ${fmtP(median)}.`);
+  setTimeout(()=>harveyMsg('Anything else, sir?',[{label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH AGAIN',val:'search'},{label:'DIFFERENT TOWN',val:'different town'}]),1200);
+  mode='menu';
+}
+
+// ── SHOW EV ──
+function showEV(result,params){
+  if(result.type==='no_data'){
+    const noDataMsg=`I searched Block ${result.block} ${result.street} for ${result.flatType} units around ${result.size} sqm in the last 12 months. ${result.count>0?`Found ${result.count} transaction${result.count>1?'s':''} but not enough for a reliable estimate.`:'No matching transactions found.'} This area may have low transaction volume.`;
+    const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+    d.innerHTML=`<span class="mlbl">// NO SUFFICIENT DATA</span><div class="ev-none">${esc(noDataMsg)}<br><br><strong style="color:var(--c)">Visit <a href="https://blocksense.estatrix.workers.dev" target="_blank" style="color:var(--c)">BlockSense</a> or <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">chat on WhatsApp</a> for a detailed valuation.</strong></div>`;
+    msgsEl.appendChild(d);bot();
+    speak(`Not enough data for Block ${result.block}, sir. Let me confirm the details with you.`);
+
+    // ── Confirm prompt — HUD form with DB-driven dropdowns + expansion panel ──
+    setTimeout(()=>{
+      const szNote=params.sizeFromDB?'<span class="hud-badge">✓ FROM DB</span>':params.sizeInferred?'<span class="hud-badge">⚠ ESTIMATED</span>':'';
+      const intro=`Before retrying, sir — please verify and correct using the dropdowns below. ${szNote}<br><em style="color:var(--a);font-size:10px">⚠ Floor area and lease year significantly improve accuracy — select from the database options found for this block.</em>`;
+      const formHtml=buildHudForm(params);
+      const {html:expHtml}=buildEvExpansionPanel(params);
+      harveyMsg(intro+'<br><br>'+formHtml+`
+<div style="margin-top:14px;border-top:1px solid var(--b);padding-top:10px">
+  <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:1px;margin-bottom:6px">── OR WIDEN THE SEARCH SCOPE ──</div>
+  ${expHtml}
+</div>`,[
+        {label:'🔄 START OVER',val:'__restart__'},
+        {label:'🔍 SEARCH TRANSACTIONS',val:`recent ${params.flatType||''} ${params.street||params.town||''}`}
+      ]);
+      speak('Please verify the details using the dropdowns, sir, or expand the search scope below.');
+      mode='ev_confirm';
+    },1500);
+    return;
+  }
+  if(result.type==='no_floor_data'){harveyMsg('Floor level data unavailable for these comps, sir. Try Transaction Search for this area.');speak('Floor data unavailable, sir.');mode='menu';return;}
+
+  // ── Analyse comps for anomalies ──
+  const compsData=result.compsData||[];
+  const warn12=result.lookbackUsed===12;
+  const sizeNote=params.sizeFromDB?` <em style="color:var(--g)">(from block records)</em>`:params.sizeInferred?` <em style="color:var(--a)">(estimated)</em>`:'';
+  const fallNote=result.fallbackLevel==='street'?` · street-level comps`:'';
+
+  // Detect floor inversion: any lower-floor comp priced HIGHER than a higher-floor comp
+  let inversionNote='';
+  let inversionSpoken='';
+  if(compsData.length>=2){
+    // Sort by floor ascending
+    const sorted=[...compsData].sort((a,b)=>a.floorMid-b.floorMid);
+    // Find the highest-priced comp and check if it's on a LOWER floor than the lowest-priced comp
+    const highestPriceComp=compsData.reduce((a,b)=>a.price>b.price?a:b);
+    const lowestPriceComp=compsData.reduce((a,b)=>a.price<b.price?a:b);
+    const invertedByPrice=highestPriceComp.floorMid<lowestPriceComp.floorMid;
+    // Also check if any lower-floor is priced higher than a higher-floor in sequence
+    let hasSequentialInversion=false;
+    for(let i=0;i<sorted.length-1;i++){
+      if(sorted[i].price>sorted[i+1].price*1.02){hasSequentialInversion=true;break;}
+    }
+    if(invertedByPrice||hasSequentialInversion){
+      const lf=highestPriceComp;
+      inversionNote=`<div class="ev-warn" style="border-color:rgba(255,170,0,.4);background:rgba(255,170,0,.06);margin-top:8px">
+        ⚠ I notice a lower floor (${esc(lf.storey_range)}) transacted at a higher price of <strong style="color:var(--a)">${fmtP(lf.price)}</strong> — this is unusual and may reflect unit-specific factors such as renovation, facing, or negotiation. The floor premium model may not fully capture this, sir. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">You may want to check in with a professional →</a>
+      </div>`;
+      inversionSpoken=`I also notice something worth flagging, sir — a lower floor transacted at a higher price of ${fmtP(lf.price)}. This is unusual and may reflect unit-specific factors. You may want to check in with a professional agent.`;
+    }
+  }
+
+  // ── Build full comps table — ALL of them, no limit ──
+  const compRows=compsData
+    .sort((a,b)=>(b.month||'').localeCompare(a.month||''))
+    .map(r=>{
+      const isHighFloor=r.floorMid>=result.floor;
+      const isRef=r.block===result.refComp.block&&r.storey_range===result.refComp.storey_range&&r.resale_price==result.refComp.resale_price;
+      return`<tr style="${isRef?'background:rgba(0,212,255,0.06)':''}">
+        <td>${esc(r.month)}</td>
+        <td>BLK ${esc(r.block)} ${esc(r.street_name)}</td>
+        <td>${esc(r.flat_type)}</td>
+        <td>${esc(r.storey_range)}</td>
+        <td>${esc(String(r.floor_area_sqm))}m²</td>
+        <td class="pc">${fmtP(r.price)}</td>
+        <td style="font-family:var(--mono);font-size:10px;color:var(--t3)">$${Math.round(r.psf)}/sqft${isRef?' <span style="color:var(--c)">REF</span>':''}</td>
+      </tr>`;
+    }).join('');
+
+  const floorNote2=result.floorPrem>0?` Your unit on floor ${result.floor} has a floor premium of ~${fmtP(result.floorPrem)} per level applied.`:'';
+  const backdateNote=warn12?` This is based on the last 12 months — insufficient data in the past 6 months, so treat as directional.`:'';
+  const scopeNote=result.fallbackLevel==='street'?` I expanded to street-level comparables — limited block-specific data.`:'';
+  const explanation=`I see resale transactions on <strong>${esc(result.fallbackLevel==='street'?result.street:'Blk '+result.block+' '+result.street)}</strong> ranging from <strong style="color:var(--c)">${fmtP(result.priceLow)}</strong> to <strong style="color:var(--c)">${fmtP(result.priceHigh)}</strong> — ${result.comps} comparable transaction${result.comps!==1?'s':''} over the last <strong>${result.lookbackUsed} months</strong>.${floorNote2}${scopeNote}${backdateNote}`;
+
+  const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+  d.innerHTML=`<span class="mlbl">// ESTIMATED VALUE · BLK ${esc(result.block)} ${esc(result.street)}</span>
+
+  <div class="ev-card">
+    ${warn12?`<div class="ev-warn">⚠ Based on last 12 months — not enough recent data. Treat as directional.<br><a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat for a more accurate valuation →</a></div>`:''}
+
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t2);letter-spacing:1px;margin-bottom:12px">
+      ${esc(result.flatType)} · FLOOR ${result.floor} · ${result.size}SQM${sizeNote} · ${esc(result.town)}${fallNote}
+    </div>
+
+    <!-- Lead: adjusted estimate big and centred -->
+    <div style="text-align:center;margin-bottom:14px">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--t2);letter-spacing:2px;margin-bottom:6px">YOUR UNIT'S ESTIMATED VALUE</div>
+      <div class="ev-price mid" style="font-size:32px">${fmtP(result.adjusted)}</div>
+    </div>
+
+    <!-- Range -->
+    <div class="ev-range" style="margin-bottom:12px">
+      <div><div class="ev-price low">${fmtP(result.priceLow)}</div><div class="ev-label">CONSERVATIVE</div></div>
+      <div class="ev-arrow">──</div>
+      <div><div class="ev-price hi">${fmtP(result.priceHigh)}</div><div class="ev-label">OPTIMISTIC</div></div>
+    </div>
+
+    <!-- Conversational explanation -->
+    <div style="background:rgba(0,212,255,0.04);border:1px solid var(--b);padding:10px 13px;font-family:var(--ui);font-size:13px;line-height:1.8;color:var(--t2);margin-bottom:8px">
+      ${explanation}
+    </div>
+
+    <!-- Inversion warning if detected -->
+    ${inversionNote}
+
+    <!-- Technical meta -->
+    <div class="ev-meta" style="margin-top:8px">
+      PSF RANGE: $${result.psfLow} – $${result.psfHigh}/sqft ·
+      FLOOR PREMIUM: ~${fmtP(result.floorPrem)}/floor ·
+      REF COMP: Blk ${esc(result.refComp.block)} ${esc(result.refComp.street_name)} · ${esc(result.refComp.storey_range)} · ${fmtP(result.refComp.resale_price)}
+    </div>
+  </div>
+
+  <!-- ALL comparable transactions used -->
+  <div class="rwrap" style="margin-top:8px">
+    <div class="rcard">
+      <div class="rh">
+        <span class="rtitle">⬡ ALL COMPARABLE TRANSACTIONS USED · ${result.fallbackLevel.toUpperCase()} LEVEL</span>
+        <span class="rcnt">${result.comps} COMP${result.comps!==1?'S':''} · LAST ${result.lookbackUsed} MONTHS</span>
+      </div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th><th>PSF</th></tr></thead>
+        <tbody>${compRows}</tbody>
+      </table></div>
+    </div>
+  </div>`;
+  msgsEl.appendChild(d);bot();
+
+  // Harvey speaks naturally
+  const speechLine=`Block ${result.block}, ${result.street}, floor ${result.floor}. Sir, I see transactions ranging from ${fmtP(result.priceLow)} to ${fmtP(result.priceHigh)}. Your unit's value should sit around ${fmtP(result.adjusted)} based on my calculation.`;
+  speak(speechLine);
+  if(inversionSpoken){setTimeout(()=>speak(inversionSpoken),3500);}
+
+  // Follow-up — professional nudge + two street transaction buttons + quiet details check
+  setTimeout(()=>{
+    const streetShort=result.street.split(' ').slice(0,4).join(' ');
+    const ftLabel=result.flatType?result.flatType.replace(' ROOM',' RM'):'ALL';
+
+    // Summary of what was used — shown quietly so user can verify
+    const sizeNote=ctx.sizeFromDB?'from block records':ctx.sizeInferred?'estimated':ctx.size+'sqm';
+    const lyNote=ctx.leaseYearFromDB?(ctx.leaseYearMultiple?'auto-selected (multiple found)':'auto-found'):'user provided';
+    const detailsSummary=`<div style="font-family:var(--mono);font-size:9px;color:var(--t3);line-height:2;margin-bottom:8px;border-top:1px solid var(--b);padding-top:8px">
+      DETAILS USED: Blk <strong style="color:var(--t2)">${esc(result.block)}</strong> · ${esc(result.street)} · ${esc(result.flatType)} · Floor <strong style="color:var(--t2)">${result.floor}</strong> · <strong style="color:var(--t2)">${result.size}sqm</strong> <em>(${sizeNote})</em> · Lease <strong style="color:var(--t2)">${ctx.leaseYear||'not set'}</strong> <em>(${lyNote})</em>
+    </div>`;
+
+    const chips=[
+      ...(result.flatType?[{label:`${ftLabel} ON ${streetShort}…`,val:`recent flattype ${result.flatType} all blocks ${result.street}`}]:[]),
+      {label:`ALL TYPES ON ${streetShort}…`,val:`recent all blocks ${result.street}`},
+      {label:'⚙ CHANGE DETAILS',val:'__changedetails__'},
+      {label:'ESTIMATE ANOTHER',val:'estimate value'}
+    ];
+    harveyMsg(`That covers everything I have, sir. Should you need a more grounded assessment, do reach out — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.<br><br>${detailsSummary}`,chips);
+    speak(`That covers all the transactions I have, sir. Do WhatsApp us if you need a more grounded assessment.`);
+  },1800);
+  mode='menu';
+}
+
+// ── Copy prefill to clipboard and into input box ──
+function copyPrefill(text){
+  navigator.clipboard?.writeText(text).catch(()=>{});
+  ciEl.value=text;
+  ciEl.style.height='auto';ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';
+  ciEl.focus();
+  vsTxt.textContent='PASTED — edit then press ENTER';
+  vsBar.style.display='flex';
+  setTimeout(()=>{vsBar.style.display='none';},3000);
+}
+
+function flatTypeChips(){return[{label:'3-ROOM',val:'3-room'},{label:'4-ROOM',val:'4-room'},{label:'5-ROOM',val:'5-room'},{label:'EXECUTIVE',val:'executive'}];}
+
+// ── DB helpers for dropdown options ──
+function getBlocksForStreet(street,town,flatType){
+  if(!DB.loaded) return [];
+  return [...new Set(DB.resale.filter(r=>
+    (!street||r.street_name.toUpperCase().includes(street.toUpperCase().slice(0,8)))&&
+    (!town||r.town===town)&&
+    (!flatType||r.flat_type===flatType)
+  ).map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b));
+}
+function getFloorsForBlock(block,street,flatType){
+  if(!DB.loaded||!block) return [];
+  const storeys=[...new Set(DB.resale.filter(r=>
+    r.block===block&&
+    (!street||r.street_name.toUpperCase().includes(street.toUpperCase().slice(0,8)))&&
+    (!flatType||r.flat_type===flatType)
+  ).map(r=>r.storey_range))];
+  // Sort by first number in range
+  return storeys.sort((a,b)=>{const na=parseInt(a)||0,nb=parseInt(b)||0;return na-nb;});
+}
+function getSizesForBlock(block,street,flatType){
+  if(!DB.loaded||!block) return [];
+  return [...new Set(DB.resale.filter(r=>
+    r.block===block&&Number(r.floor_area_sqm)>0&&
+    (!street||r.street_name.toUpperCase().includes(street.toUpperCase().slice(0,8)))&&
+    (!flatType||r.flat_type===flatType)
+  ).map(r=>Number(r.floor_area_sqm)))].sort((a,b)=>a-b);
+}
+function getLeaseYearsForBlock(block,street,flatType){
+  if(!DB.loaded||!block) return [];
+  return [...new Set(DB.resale.filter(r=>
+    r.block===block&&r.lease_commence_date&&parseInt(r.lease_commence_date)>0&&
+    (!street||r.street_name.toUpperCase().includes(street.toUpperCase().slice(0,8)))&&
+    (!flatType||r.flat_type===flatType)
+  ).map(r=>parseInt(r.lease_commence_date)))].sort((a,b)=>a-b);
+}
+function getStreetsForTown(town){
+  if(!DB.loaded||!town) return [];
+  return [...new Set(DB.resale.filter(r=>r.town===town).map(r=>r.street_name))].sort();
+}
+// Convert storey range to individual floor options
+function storeyRangeToFloors(storeys){
+  const floors=new Set();
+  storeys.forEach(s=>{
+    const m=s.match(/(\d+)\s+TO\s+(\d+)/i);
+    if(m){for(let f=parseInt(m[1]);f<=parseInt(m[2]);f++)floors.add(f);}
+    else{const n=parseInt(s);if(!isNaN(n))floors.add(n);}
+  });
+  return [...floors].sort((a,b)=>a-b);
+}
+
+// ── Build the inline HUD form card ──
+function buildHudForm(ctx){
+  const formId='hud-form-'+Date.now();
+  const town    = ctx.town||'';
+  const street  = ctx.street||'';
+  const block   = ctx.block||'';
+  const flatType= ctx.flatType||'';
+
+  // Get options from DB
+  const towns   = TOWNS;
+  const streets = town ? getStreetsForTown(town) : (street?[street]:[]);
+  const blocks  = getBlocksForStreet(street,town,flatType);
+  const storeys = block ? getFloorsForBlock(block,street,flatType) : [];
+  const floors  = storeyRangeToFloors(storeys);
+  const sizes   = getSizesForBlock(block,street,flatType);
+  const leaseYrs= getLeaseYearsForBlock(block,street,flatType);
+
+  const opt=(val,label,sel)=>`<option value="${val}"${sel?` selected`:``}>${label}</option>`;
+  const blankOpt=(label)=>`<option value="">— ${label} —</option>`;
+
+  // Town dropdown
+  const townOpts=blankOpt('select town')+towns.map(t=>opt(t,t,t===town)).join('');
+  // Street dropdown
+  const streetOpts=blankOpt('select street')+(streets.length?streets.map(s=>opt(s,s,s===street)).join(''):`<option value="${street}">${street||'type below'}</option>`);
+  // Block dropdown
+  const blockOpts=blankOpt('select block')+(blocks.length?blocks.map(b=>opt(b,'Blk '+b,b===block)).join(''):`<option value="${block}">${block?'Blk '+block:'type below'}</option>`);
+  // Flat type
+  const ftOpts=blankOpt('flat type')+['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE'].map(ft=>opt(ft,ft,ft===flatType)).join('');
+  // Floor
+  const floorOpts=blankOpt('floor')+(floors.length?floors.map(f=>opt(f,'Floor '+f,f===ctx.floor)).join(''):'');
+  // Size
+  const szInferred=ctx.sizeInferred?` <span class="hud-badge">⚠ ESTIMATED</span>`:ctx.sizeFromDB?` <span class="hud-badge">✓ FROM DB</span>`:'';
+  const sizeOpts=blankOpt('floor area')+(sizes.length?sizes.map(s=>opt(s,s+' sqm',s===ctx.size)).join(''):`<option value="${ctx.size||''}">${ctx.size?ctx.size+' sqm (estimated)':'not found'}</option>`);
+  // Lease year
+  // Lease year — show all found + mark auto-selected one
+  const lyNote2=ctx.leaseYearMultiple?` <span class="hud-badge" style="color:var(--a)">⚠ MULTIPLE FOUND</span>`:ctx.leaseYearFromDB?` <span class="hud-badge">✓ AUTO</span>`:'';
+  const lyOpts=blankOpt('lease year')+(leaseYrs.length?leaseYrs.map(y=>opt(y,`${y}${ctx.leaseYearMultiple&&y===ctx.leaseYear?' (selected)':''}`,y===ctx.leaseYear)).join(''):`<option value="">not found in DB</option>`);
+
+  const html=`Please select or correct the details, sir:<br>
+<div class="hud-form" id="${formId}">
+  <div class="hud-row">
+    <span class="hud-label">📍 TOWN</span>
+    <select class="hud-select" id="${formId}-town" onchange="hudCascade('${formId}')">
+      ${townOpts}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">🛣️ STREET</span>
+    <select class="hud-select" id="${formId}-street" onchange="hudCascade('${formId}')">
+      ${streetOpts}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">🔢 BLOCK</span>
+    <select class="hud-select" id="${formId}-block" onchange="hudCascade('${formId}')">
+      ${blockOpts}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">🏠 FLAT TYPE</span>
+    <select class="hud-select" id="${formId}-flattype" onchange="hudCascade('${formId}')">
+      ${ftOpts}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">📶 FLOOR</span>
+    <select class="hud-select" id="${formId}-floor">
+      ${floorOpts||blankOpt('select block first')}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">📐 FLOOR AREA${szInferred}</span>
+    <select class="hud-select" id="${formId}-size">
+      ${sizeOpts}
+    </select>
+  </div>
+  <div class="hud-row">
+    <span class="hud-label">🗓️ LEASE YEAR${lyNote2}</span>
+    <select class="hud-select" id="${formId}-lease">
+      ${lyOpts}
+    </select>
+  </div>
+  <div class="hud-divider"></div>
+  <div class="hud-row">
+    <button class="hud-submit" onclick="hudSubmit('${formId}')">⬡ ESTIMATE VALUE</button>
+    <button class="hud-submit" style="background:var(--t3);color:var(--t2)" onclick="hudCopy('${formId}')">📋 COPY AS TEXT</button>
+  </div>
+  <div id="${formId}-preview" style="font-family:var(--mono);font-size:9px;color:var(--t2);margin-top:4px;min-height:14px"></div>
+</div>`;
+  return html;
+}
+
+// ── Cascade: when town/street/block changes, reload downstream options ──
+function hudCascade(fid){
+  const town    = document.getElementById(fid+'-town')?.value||'';
+  const street  = document.getElementById(fid+'-street')?.value||'';
+  const block   = document.getElementById(fid+'-block')?.value||'';
+  const flatType= document.getElementById(fid+'-flattype')?.value||'';
+
+  // Re-populate street if town changed
+  if(town){
+    const streets=getStreetsForTown(town);
+    const stSel=document.getElementById(fid+'-street');
+    if(stSel&&streets.length){
+      const cur=stSel.value;
+      stSel.innerHTML=`<option value="">— select street —</option>`+streets.map(s=>`<option value="${s}"${s===cur?' selected':''}>${s}</option>`).join('');
+    }
+  }
+  // Re-populate blocks
+  const blkSel=document.getElementById(fid+'-block');
+  if(blkSel&&(town||street)){
+    const blocks=getBlocksForStreet(street,town,flatType);
+    const cur=blkSel.value;
+    blkSel.innerHTML=`<option value="">— select block —</option>`+(blocks.length?blocks.map(b=>`<option value="${b}"${b===cur?' selected':''}>Blk ${b}</option>`).join(''):'<option value="">no blocks found</option>');
+  }
+  // Re-populate floors, sizes, lease years when block selected
+  if(block){
+    const floorSel=document.getElementById(fid+'-floor');
+    const sizeSel =document.getElementById(fid+'-size');
+    const lySel   =document.getElementById(fid+'-lease');
+    const storeys=getFloorsForBlock(block,street,flatType);
+    const floors =storeyRangeToFloors(storeys);
+    const sizes  =getSizesForBlock(block,street,flatType);
+    const lyrs   =getLeaseYearsForBlock(block,street,flatType);
+    if(floorSel&&floors.length)floorSel.innerHTML=`<option value="">— floor —</option>`+floors.map(f=>`<option value="${f}">Floor ${f}</option>`).join('');
+    if(sizeSel&&sizes.length) sizeSel.innerHTML=`<option value="">— sqm —</option>`+sizes.map(s=>`<option value="${s}">${s} sqm</option>`).join('');
+    if(lySel&&lyrs.length)    lySel.innerHTML=`<option value="">— lease year —</option>`+lyrs.map(y=>`<option value="${y}">${y}</option>`).join('');
+  }
+  // Update preview text
+  hudUpdatePreview(fid);
+}
+
+function hudUpdatePreview(fid){
+  const t=document.getElementById(fid+'-town')?.value||'';
+  const s=document.getElementById(fid+'-street')?.value||'';
+  const b=document.getElementById(fid+'-block')?.value||'';
+  const ft=document.getElementById(fid+'-flattype')?.value||'';
+  const fl=document.getElementById(fid+'-floor')?.value||'';
+  const sz=document.getElementById(fid+'-size')?.value||'';
+  const ly=document.getElementById(fid+'-lease')?.value||'';
+  const prev=document.getElementById(fid+'-preview');
+  if(prev){
+    const parts=[b?'Block '+b:'',s||'',fl?'Floor '+fl:'',ft||'',sz?sz+' sqm':'',ly?'Lease '+ly:''].filter(Boolean);
+    prev.textContent=parts.length?'▸ '+parts.join(' · '):'';
+  }
+}
+
+function hudSubmit(fid){
+  const town  =document.getElementById(fid+'-town')?.value||ctx.town||'';
+  const street=document.getElementById(fid+'-street')?.value||ctx.street||'';
+  const block =document.getElementById(fid+'-block')?.value||ctx.block||'';
+  const ft    =document.getElementById(fid+'-flattype')?.value||ctx.flatType||'';
+  const floor =Number(document.getElementById(fid+'-floor')?.value)||ctx.floor||0;
+  const size  =Number(document.getElementById(fid+'-size')?.value)||0;
+  const lease =Number(document.getElementById(fid+'-lease')?.value)||0;
+  // Apply to ctx
+  if(town)  ctx.town=town;
+  if(street)ctx.street=street;
+  if(block) ctx.block=block;
+  if(ft)    ctx.flatType=ft;
+  if(floor) ctx.floor=floor;
+  if(size)  {ctx.size=size;ctx.sizeInferred=false;ctx.sizeFromDB=false;}
+  if(lease) ctx.leaseYear=lease;
+  enrichCtx(ctx);
+  if(!ctx.size&&ctx.block&&ctx.flatType){
+    const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);
+    if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}
+  }
+  if(!ctx.size&&ctx.flatType){ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}
+  // Show what we're running with
+  const summary=[ctx.block?'Blk '+ctx.block:'',ctx.street||'',ctx.flatType||'',ctx.floor?'Floor '+ctx.floor:'',ctx.size?ctx.size+'sqm':'',ctx.leaseYear?'Lease '+ctx.leaseYear:''].filter(Boolean).join(' · ');
+  userMsg('Estimate: '+summary);
+  mode='ev_waiting';
+  runEV();
+}
+
+function hudCopy(fid){
+  const t=document.getElementById(fid+'-town')?.value||'';
+  const s=document.getElementById(fid+'-street')?.value||'';
+  const b=document.getElementById(fid+'-block')?.value||'';
+  const ft=document.getElementById(fid+'-flattype')?.value||'';
+  const fl=document.getElementById(fid+'-floor')?.value||'';
+  const sz=document.getElementById(fid+'-size')?.value||'';
+  const ly=document.getElementById(fid+'-lease')?.value||'';
+  const txt=[b?'Block '+b:'',s||'',fl?'floor '+fl:'',ft||'',sz?sz+' sqm':'',ly?'lease '+ly:''].filter(Boolean).join(' ');
+  navigator.clipboard?.writeText(txt).catch(()=>{});
+  ciEl.value=txt;ciEl.style.height='auto';ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';ciEl.focus();
+  const prev=document.getElementById(fid+'-preview');
+  if(prev){prev.textContent='📋 Copied & pasted to input — edit if needed then press ENTER';prev.style.color='var(--g)';}
+}
+
+// ── PROMPT ALL MISSING — show HUD form ──
+function promptMissing(ctx){
+  if(ctx.isEV){
+    enrichCtx(ctx);
+    const missing=buildMissingPrompt(ctx);
+    if(missing.length>0){
+      const formHtml=buildHudForm(ctx);
+      harveyMsg(formHtml);
+      speak('A few more details please, sir. Select from the options or type in the box below.');
+      mode='ev_waiting';loading=false;sbEl.disabled=false;return;
+    }
+    runEV();
+  } else {
+    enrichCtx(ctx);
+    if(!ctx.town&&!ctx.street&&!ctx.block){
+      harveyMsg(`To search, sir — which town or street?<br><br>${buildSearchMissingPrompt(ctx).join('<br>')}<br><br><em style="color:var(--t2);font-size:11px">e.g. <strong style="color:var(--c)">3-room Clementi</strong> or <strong style="color:var(--c)">Clementi West Street 1</strong></em>`,flatTypeChips());
+      speak('Which town or street, sir?');
+      mode='srch_waiting';loading=false;sbEl.disabled=false;return;
+    }
+    runSearch();
+  }
+}
+
+async function runEV(){
+  loading=true;sbEl.disabled=true;
+  enrichCtx(ctx);
+  if(!ctx.size&&ctx.block&&ctx.flatType){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}}
+  if(!ctx.size&&ctx.flatType){ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}
+  speak(rand(['Stand by, sir.','Computing estimate, sir.','Accessing records, sir.']));
+  thinkingMsg();await new Promise(r=>setTimeout(r,300));
+  const result=computeEstimate(ctx);rmThinking();showEV(result,ctx);
+  loading=false;sbEl.disabled=false;
+}
+
+async function runSearch(){
+  loading=true;sbEl.disabled=true;
+  speak(rand(['Stand by, sir.','Searching records, sir.','One moment, sir.']));
+  thinkingMsg();await new Promise(r=>setTimeout(r,200));
+  const recs=searchTransactions(ctx);
+  const cutoff=evCutoff(6);
+  const is6mo=recs.length>0&&recs.some(r=>r.month>=cutoff);
+  rmThinking();showTransactions(recs,ctx,is6mo);
+  loading=false;sbEl.disabled=false;
+}
+
+// ── Smart partial detection: street only → show what we found, be gracious ──
+async function handleStreetOnly(street, ctx){
+  loading=true;sbEl.disabled=true;
+  thinkingMsg();
+  await new Promise(r=>setTimeout(r,200));
+
+  // Look up canonical street + town + all blocks
+  const found=reverseStreet(street);
+  rmThinking();
+
+  if(!found){
+    // Street not recognised at all
+    harveyMsg(`I couldn't find a street matching <strong>${esc(street)}</strong> in my records, sir. Could you double-check the street name?<br><br><em style="color:var(--t2);font-size:11px">e.g. Clementi West Street 1, Tampines Street 44, Bishan Street 12</em>`);
+    speak("I couldn't find that street, sir. Could you double-check the name?");
+    loading=false;sbEl.disabled=false;mode='srch_waiting';return;
+  }
+
+  // Try 6 months first, then 12 months
+  const cut6=evCutoff(6);
+  const cut12=evCutoff(12);
+  const recs6=DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut6);
+  const recs12=recs6.length>0?recs6:DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut12);
+  const timeLabel=recs6.length>0?'6 months':'12 months';
+  const recs=recs12.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+
+  // Get blocks available in this street
+  const allBlocks=[...new Set(DB.resale.filter(r=>r.street_name===found.street).map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b));
+
+  // ── Harvey's gracious partial-info speech ──
+  const gracious=[
+    `I wasn't given everything to work with, sir — but I spotted <strong>${esc(found.street)}</strong> in <strong>${esc(found.town)}</strong>. Not entirely your fault, of course. Here's what I found:`,
+    `I did the best with what I had, sir. <strong>${esc(found.street)}</strong>, <strong>${esc(found.town)}</strong> — I took the liberty of pulling the transactions. Have a look:`,
+    `You've given me the street, sir — that's enough to get started. I've found <strong>${esc(found.street)}</strong> in <strong>${esc(found.town)}</strong>. Here's what the last ${timeLabel} look like:`
+  ];
+
+  if(recs.length===0){
+    // Nothing even in 12 months
+    harveyMsg(`I tried looking back a full year for <strong>${esc(found.street)}</strong>, sir, and I'm afraid there's nothing there. It seems to be a quiet street with very few transactions. Not much I can do with silence, sir — but let's not give up just yet.<br><br>
+<em style="color:var(--t2);font-size:11px">Shall we try both? I can look at the broader ${esc(found.town)} area, or we can go straight to estimating the value if you give me the block and floor details.</em>`,[
+      {label:`SEARCH ${found.town}`,val:`recent ${found.town}`},
+      {label:'ESTIMATE VALUE',val:'estimate value'}
+    ]);
+    speak(`I tried looking back a full year for ${found.street}, sir, and found nothing. Very quiet street. Shall we try the broader area, or go straight to an estimate?`);
+    // Pre-fill ctx with what we know
+    ctx.town=found.town;ctx.street=found.street;
+    mode='srch_waiting';loading=false;sbEl.disabled=false;return;
+  }
+
+  // Show partial results — ALL records
+  const prices=recs.map(r=>Number(r.resale_price));
+  const median=prices.slice().sort((a,b)=>a-b)[Math.floor(prices.length/2)];
+  const rows=recs.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
+
+  const blockBadges=allBlocks.slice(0,12).map(b=>`<span class="chip" style="font-size:9px;padding:3px 8px" onclick="chipClick('estimate value block ${b} ${found.street}')">BLK ${b}</span>`).join(' ');
+
+  const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+  d.innerHTML=`<span class="mlbl">// PARTIAL RESULTS · ${found.street.toUpperCase()}</span>
+    <div class="mbub">${rand(gracious)}</div>
+    <div class="rwrap">
+      <div class="rcard">
+        <div class="rh">
+          <span class="rtitle">⬡ ${esc(found.street.toUpperCase())} · ${esc(found.town)}</span>
+          <span class="rcnt">${recs.length} RECORDS · LAST ${timeLabel.toUpperCase()}</span>
+        </div>
+        <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>
+      <div class="srow">
+        <div class="sc"><span class="svv">${fmtP(median)}</span><span class="sll">MEDIAN</span></div>
+        <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
+        <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
+      </div>
+    </div>`;
+  msgsEl.appendChild(d);bot();
+  speak(`${recs.length} transaction${recs.length!==1?'s':''} found on ${found.street}, sir. Median price ${fmtP(median)}.`);
+
+  // Pre-fill ctx
+  ctx.town=found.town;ctx.street=found.street;
+
+  // Follow-up: blocks available + nudge to estimate
+  setTimeout(()=>{
+    const nudgeHtml=`If I may, sir — if you could kindly confirm a few more details, I can get you a proper estimated value for your specific unit.<br><br>
+<strong style="color:var(--c)">Blocks available on this street:</strong><br>
+<div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0">${blockBadges}${allBlocks.length>12?`<span style="font-family:var(--mono);font-size:9px;color:var(--t3)">+${allBlocks.length-12} more</span>`:''}</div>`;
+    harveyMsg(nudgeHtml,[
+      {label:'ESTIMATE VALUE',val:'estimate value'},
+      {label:'REFINE SEARCH',val:'__searchform__'},
+      {label:'SEARCH WHOLE TOWN',val:`recent ${found.town}`}
+    ]);
+    speak(`I have ${allBlocks.length} blocks on this street, sir. Click one to estimate, or let me know your block and floor and I will get you the value.`);
+    mode='srch_waiting';loading=false;sbEl.disabled=false;
+  },1400);
+}
+
+// ── MAIN INPUT HANDLER ──
+async function handleInput(){
+  const raw=ciEl.value.trim();
+  if(!raw||loading)return;
+  loading=true;sbEl.disabled=true;
+  ciEl.value='';ciEl.style.height='auto';
+  resetIdle();
+
+  // ── Restart chip ──
+  if(raw==='__restart__'){
+    userMsg('Start over');ctx={};mode='menu';
+    harveyMsg('Of course, sir. Starting fresh — what would you like to do?',[{label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]);
+    speak('Starting fresh, sir.');loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── Search form chip ──
+  if(raw==='__searchform__'){
+    userMsg('Refine search');
+    harveyMsg('Refine your search, sir:<br><br>'+buildSearchForm(ctx),[{label:'🔄 START OVER',val:'__restart__'}]);
+    speak('Here are the search options, sir.');loading=false;sbEl.disabled=false;return;
+  }
+
+  userMsg(raw);
+  if(!DB.loaded){harveyMsg('Still loading data, sir. One moment...');loading=false;sbEl.disabled=false;return;}
+  const parsed=parseQuery(normalizeSpeech(raw));
+
+  // ── Confirmation mode after no-data ──
+  if(mode==='ev_confirm'){
+    if(raw==='__restart__'||/start.?over|restart|fresh|new.?query/i.test(raw)){
+      ctx={};mode='menu';
+      harveyMsg('Of course, sir. Starting fresh — what would you like to do?',[{label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]);
+      speak('Starting fresh, sir.');loading=false;sbEl.disabled=false;return;
+    }
+    if(/^correct(\s+retry)?$|^yes$|^same$|^retry$|^looks\s*(good|right|ok)$/i.test(raw.trim())){
+      mode='ev_waiting';await runEV();return;
+    }
+    const p=parseQuery(normalizeSpeech(raw));
+    if(p.town)     ctx.town=p.town;
+    if(p.flatType) ctx.flatType=p.flatType;
+    if(p.street)   ctx.street=p.street;
+    if(p.block)    ctx.block=p.block;
+    if(p.floor)    ctx.floor=p.floor;
+    if(p.size){    ctx.size=p.size;ctx.sizeInferred=false;ctx.sizeFromDB=false;}
+    if(p.leaseYear)ctx.leaseYear=p.leaseYear;
+    enrichCtx(ctx);
+    if(ctx.block&&ctx.flatType&&!p.size){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;ctx.sizeInferred=false;}}
+    mode='ev_waiting';await runEV();return;
+  }
+
+  // ── Waiting modes — absorb all new info ──
+  if(mode==='ev_waiting'||mode==='srch_waiting'){
+    // Check if user is reacting to a previous result rather than giving new info
+    const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
+    const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice;
+    if(isReaction&&!hasNewInfo){
+      const replies=[
+        `I'm afraid the data and numbers present themselves as such, sir. The estimate is based on actual resale transactions — I can only work with what the market has transacted. For a more grounded view, you may want a professional agent for the on-the-ground sensing. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
+        `The numbers are what they are, sir — I'm merely reflecting the recorded transactions. If it feels off, a professional agent would give you a fuller picture. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Do reach out to us on WhatsApp</a>.`,
+        `I understand, sir — but I'm afraid the data presents itself as such. Market conditions on the ground can differ. Feel free to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">chat with us on WhatsApp</a> for a more personal assessment.`
+      ];
+      harveyMsg(rand(replies),[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
+      speak(`I'm afraid the data presents itself as such, sir. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+    if(parsed.town)     ctx.town=parsed.town;
+    if(parsed.flatType) ctx.flatType=parsed.flatType;
+    if(parsed.street)   ctx.street=parsed.street;
+    if(parsed.block)    ctx.block=parsed.block;
+    if(parsed.floor)    ctx.floor=parsed.floor;
+    if(parsed.size){    ctx.size=parsed.size;ctx.sizeInferred=false;ctx.sizeFromDB=false;}
+    if(parsed.leaseYear)ctx.leaseYear=parsed.leaseYear;
+    if(parsed.maxPrice) ctx.maxPrice=parsed.maxPrice;
+    if(parsed.minPrice) ctx.minPrice=parsed.minPrice;
+    enrichCtx(ctx);
+    if(ctx.flatType&&!ctx.size){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}else{ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}}
+    if(mode==='ev_waiting'){
+      const still=buildMissingPrompt(ctx).filter(s=>!s.includes('optional')&&!s.includes('I can find'));
+      if(still.length>0){harveyMsg(`Still need a couple more, sir:<br><br>${still.join('<br>')}`);speak('Still a couple more details, sir.');loading=false;sbEl.disabled=false;return;}
+      await runEV();
+    }else{await runSearch();}
+    return;
+  }
+
+  // ── Change details chip — show dropdown silently, no re-ask ──
+  if(raw==='__changedetails__'){
+    userMsg('Change details');
+    const formHtml=buildHudForm(ctx);
+    harveyMsg(`Of course, sir. Here are the details used — adjust anything and press Estimate Value to re-run:<br><br>${formHtml}`);
+    speak('Here are the details, sir. Adjust and re-run whenever you are ready.');
+    mode='ev_confirm';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── Special: street-specific queries ──
+  if(/^recent (flattype .+ all blocks|all blocks) /i.test(raw)){
+    let flatTypeFilter='';
+    let streetName='';
+    const ftMatch=raw.match(/^recent flattype (.+?) all blocks (.+)$/i);
+    const allMatch=raw.match(/^recent all blocks (.+)$/i);
+    if(ftMatch){flatTypeFilter=ftMatch[1].trim().toUpperCase();streetName=ftMatch[2].trim();}
+    else if(allMatch){streetName=allMatch[1].trim();}
+
+    const found=reverseStreet(streetName);
+    const canonicalStreet=found?found.street:streetName.toUpperCase();
+
+    let streetRecs=DB.resale.filter(r=>r.street_name===canonicalStreet);
+    if(flatTypeFilter) streetRecs=streetRecs.filter(r=>r.flat_type===flatTypeFilter);
+    streetRecs=streetRecs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+
+    document.getElementById('welcome')?.remove();
+    const label=flatTypeFilter?`${flatTypeFilter} ON ${canonicalStreet}`:`ALL ON ${canonicalStreet}`;
+    userMsg(flatTypeFilter?`${flatTypeFilter} transactions on ${canonicalStreet}`:`All transactions on ${canonicalStreet}`);
+
+    if(!streetRecs.length){
+      harveyMsg(`No ${flatTypeFilter||'transactions'} found on <strong>${esc(canonicalStreet)}</strong>, sir.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+    const prices=streetRecs.map(r=>Number(r.resale_price));
+    const median=[...prices].sort((a,b)=>a-b)[Math.floor(prices.length/2)];
+    const rows=streetRecs.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
+    const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
+    d.innerHTML=`<span class="mlbl">// ${streetRecs.length} TRANSACTIONS · ${esc(label)}</span>
+      <div class="mbub"><strong>${streetRecs.length}</strong> transaction${streetRecs.length!==1?'s':''} — ${flatTypeFilter?`<strong>${esc(flatTypeFilter)}</strong> on`:'all types on'} <strong>${esc(canonicalStreet)}</strong>, sir.</div>
+      <div class="rwrap"><div class="rcard">
+        <div class="rh"><span class="rtitle">⬡ ${esc(label)}</span><span class="rcnt">${streetRecs.length} RECORDS · ALL TIME</span></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>
+      <div class="srow">
+        <div class="sc"><span class="svv">${fmtP(median)}</span><span class="sll">MEDIAN</span></div>
+        <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
+        <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
+      </div></div>`;
+    msgsEl.appendChild(d);bot();
+    speak(`${streetRecs.length} transaction${streetRecs.length!==1?'s':''} on ${cleanForSpeech(canonicalStreet)}${flatTypeFilter?', '+flatTypeFilter.toLowerCase():''}, sir.`);
+    // Show the other button too
+    const streetShort=canonicalStreet.split(' ').slice(0,4).join(' ');
+    setTimeout(()=>harveyMsg('Anything else, sir?',[
+      ...(flatTypeFilter?[{label:`ALL TYPES ON ${streetShort}…`,val:`recent all blocks ${canonicalStreet}`}]:[]),
+      {label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH AGAIN',val:'search'}
+    ]),1200);
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── Fresh intent ──
+  ctx={...parsed};enrichCtx(ctx);
+
+  if(/^(hi|hello|hey|good\s*(day|morning|afternoon|evening))/i.test(raw)){
+    harveyMsg('Good day, sir. What would you like to know?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak('Good day, sir.');mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── SMART PARTIAL DETECTION ──
+  // Has street but missing block/floor/flatType → show street transactions + nudge
+  if(ctx.street&&!ctx.isEV&&!ctx.block&&!ctx.floor&&!ctx.flatType){
+    await handleStreetOnly(ctx.street,ctx);return;
+  }
+  // Has street + some EV intent but missing block/floor → show street data then nudge to EV
+  if(ctx.street&&ctx.isEV&&(!ctx.block||!ctx.floor)){
+    await handleStreetOnly(ctx.street,ctx);
+    // After partial results show, mode is srch_waiting — switch to EV
+    ctx.isEV=true;return;
+  }
+  // Has town but nothing else → show town transactions and prompt
+  if(ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.isEV){
+    ctx.isEV=false;mode='srch_waiting';
+    runSearch();return;
+  }
+
+  if(ctx.isEV||/valuat|estimate|worth|value|how much|price of|check value/i.test(raw)){
+    ctx.isEV=true;
+    if(!ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.floor){
+      harveyMsg(`Of course, sir. Please go ahead and input your <strong>block number</strong>, <strong>street</strong>, the <strong>unit's level</strong> and the <strong>flat type</strong>. Something like:<br><br>
+<em style="color:var(--c);font-family:var(--mono);font-size:11px">608 Clementi West Street 1 level 4 3 room</em><br><br>
+<em style="color:var(--t2);font-size:11px">You can also include the <strong>lease year</strong> for better accuracy — e.g. <strong style="color:var(--c)">lease 1979</strong>. Floor area is optional — I'll look it up from the records.</em>`,flatTypeChips());
+      speak('Of course, sir. Please go ahead and input your block number, street, the unit level — that is the floor — and the flat type.');
+      mode='ev_waiting';loading=false;sbEl.disabled=false;return;
+    }
+    mode='ev_waiting';promptMissing(ctx);
+  }else if(ctx.town||ctx.street||ctx.block||/transact|search|recent|sales?|sold|show|find/i.test(raw)){
+    ctx.isEV=false;mode='srch_waiting';promptMissing(ctx);
+  }else{
+    // ── Harvey's natural response when user questions/doubts/reacts after a result ──
+    // Detect frustration, doubt or surprise about the result
+    const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
+    if(isReaction&&(mode==='menu'||mode==='srch_waiting'||mode==='ev_waiting')){
+      const replies=[
+        `I'm afraid the data and numbers present themselves as such, sir. The estimate is based on actual resale transactions recorded in the area — I can only work with what the market has transacted. For a more grounded assessment, you may want a professional real estate agent for the on-the-ground sensing. Feel free to reach out to us directly — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
+        `The numbers are what they are, sir — I'm merely reflecting the recent transactions in the database. If the figure feels off from your expectations, it may be worth engaging a professional agent for an on-the-ground sense check. You're welcome to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">reach out to us on WhatsApp</a> and we'd be happy to assist.`,
+        `I understand, sir — but I'm afraid the data presents itself as such. These figures are derived purely from comparable resale transactions. Market conditions on the ground can differ, and a professional agent would give you a fuller picture. Do feel free to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">chat with us on WhatsApp</a> for a more personal assessment.`
+      ];
+      const reply=rand(replies);
+      harveyMsg(reply,[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
+      speak(`I'm afraid the data and numbers present themselves as such, sir. The estimate reflects actual recorded transactions. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+    harveyMsg('How can I help, sir?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak('How can I help, sir?');mode='menu';loading=false;sbEl.disabled=false;
+  }
+  loading=false;sbEl.disabled=false;
+}
+
+function chipClick(val){ciEl.value=val;handleInput();}
+function sendMessage(){handleInput();}
+
+// ── IDLE TIMER ──
+const IDLE_MS=10*60*1000;let idleTimer=null,isIdle=false;
+function resetIdle(){if(isIdle)wakeFromIdle();isIdle=false;clearTimeout(idleTimer);idleTimer=setTimeout(goIdle,IDLE_MS);}
+function goIdle(){
+  if(isIdle)return;isIdle=true;
+  if(currentAudio){currentAudio.pause();currentAudio=null;}window.speechSynthesis.cancel();
+  const d=document.createElement('div');d.id='idle-overlay';
+  d.style.cssText='position:fixed;inset:0;background:rgba(3,8,15,0.93);z-index:8888;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;cursor:pointer';
+  d.innerHTML=`<div style="position:relative;width:160px;height:160px;display:flex;align-items:center;justify-content:center">
+    <svg style="position:absolute;inset:0;width:100%;height:100%" viewBox="0 0 160 160" fill="none">
+      <circle cx="80" cy="80" r="72" stroke="rgba(0,212,255,0.12)" stroke-width="1" stroke-dasharray="4 4" style="animation:spin 20s linear infinite"/>
+      <circle cx="80" cy="80" r="60" stroke="rgba(0,212,255,0.2)" stroke-width="1.5" stroke-dasharray="8 3" style="animation:spin 12s linear infinite reverse"/>
+      <circle cx="80" cy="80" r="48" stroke="rgba(0,212,255,0.35)" stroke-width="2" style="animation:spin 7s linear infinite"/>
+      <circle cx="80" cy="80" r="36" stroke="rgba(0,212,255,0.55)" stroke-width="2.5" stroke-dasharray="3 5" style="animation:spin 4s linear infinite reverse"/>
+      <circle cx="80" cy="80" r="24" stroke="rgba(0,212,255,0.7)" stroke-width="1.5"/>
+    </svg>
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center">
+      <div style="font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:rgba(0,212,255,0.35);letter-spacing:4px">HARVEY</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:rgba(0,212,255,0.2);letter-spacing:2px;margin-top:4px">STANDBY</div>
+    </div></div>
+  <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:rgba(0,212,255,0.3);letter-spacing:2px;animation:idlepulse 3s ease-in-out infinite">SYSTEM IDLE</div>
+  <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:rgba(0,212,255,0.18);letter-spacing:1px">CLICK ANYWHERE · SAY "WAKE UP HARVEY"</div>
+  <style>@keyframes idlepulse{0%,100%{opacity:.25}50%{opacity:.7}}</style>`;
+  d.onclick=wakeFromIdle;document.body.appendChild(d);
+  setTimeout(()=>speak(rand(['Going to standby, sir.','Entering idle mode, sir.'])),300);
+}
+function wakeFromIdle(){
+  if(!isIdle)return;isIdle=false;document.getElementById('idle-overlay')?.remove();resetIdle();
+  const msg=rand(['Welcome back, sir.','Systems active, sir.','Ready, sir.']);
+  harveyMsg(msg,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+  speak(msg);mode='menu';
+}
+document.addEventListener('mousemove',resetIdle,{passive:true});
+document.addEventListener('keydown',resetIdle,{passive:true});
+document.addEventListener('click',resetIdle,{passive:true});
+document.addEventListener('touchstart',resetIdle,{passive:true});
+
+// ── SINGLE MIC STATE MACHINE ──
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const mbEl=document.getElementById('mb');
+const vsBar=document.getElementById('vs-bar');
+const vsTxt=document.getElementById('vs-txt');
+const vsSup=document.getElementById('vs-sup');
+let micState='off',recog=null,recogBusy=false;
+let speechTimer=null; // delay before processing — don't interrupt user
+
+// ── Singlish / speech normalizer ──
+function normalizeSpeech(txt){
+  let s=txt.trim();
+  // Contract long-form street words → DB short form (works for both typed and voice)
+  // e.g. user types "Clementi West Street 1" → "Clementi West ST 1" for DB matching
+  s=contractStreetAbbr(s.toUpperCase());
+  // Also handle BLK → keep as-is (DB uses BLK prefix in some places but not street names)
+
+  // ── Flat type phonetic fixes ──
+  s=s.replace(/\b(tree|three|tri|thri|free|3)\s*(room|rum|roo|ruum)\b/gi,'3 room');
+  s=s.replace(/\b(four|for|4)\s*(room|rum|roo|ruum)\b/gi,'4 room');
+  s=s.replace(/\b(five|fife|5)\s*(room|rum|roo|ruum)\b/gi,'5 room');
+  s=s.replace(/\b(two|tu|too|2)\s*(room|rum|roo|ruum)\b/gi,'2 room');
+  s=s.replace(/\b(one|wan|wun|1)\s*(room|rum|roo|ruum)\b/gi,'1 room');
+  s=s.replace(/\bexecu?tive?\b/gi,'executive');
+
+  // ── Town phonetic fixes ──
+  s=s.replace(/\bcleme[nt]+[eiy]?\b/gi,'clementi');
+  s=s.replace(/\bkalla?ng?\b/gi,'kallang');
+  s=s.replace(/\byish?oon?\b/gi,'yishun');
+  s=s.replace(/\btampine?s?\b/gi,'tampines');
+  s=s.replace(/\bwood\s*land?s?\b/gi,'woodlands');
+  s=s.replace(/\bbedok?\b/gi,'bedok');
+  s=s.replace(/\bbishan?\b/gi,'bishan');
+  s=s.replace(/\bpungg?ol?\b/gi,'punggol');
+  s=s.replace(/\bsengkang?\b/gi,'sengkang');
+  s=s.replace(/\bhougang?\b/gi,'hougang');
+  s=s.replace(/\bqueens?town?\b/gi,'queenstown');
+  s=s.replace(/\bjurong?\b/gi,'jurong');
+  s=s.replace(/\bserangoon?\b/gi,'serangoon');
+
+  // ── Floor number words ──
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(one|wan|first)\b/gi,'floor 1');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(two|too|tu|second)\b/gi,'floor 2');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(three|tree|free|third)\b/gi,'floor 3');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(four|for|fourth)\b/gi,'floor 4');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(five|fife|fifth)\b/gi,'floor 5');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(six|sixth)\b/gi,'floor 6');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(seven|seventh)\b/gi,'floor 7');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(eight|ate|eighth)\b/gi,'floor 8');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(nine|ninth)\b/gi,'floor 9');
+  s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(ten|tenth)\b/gi,'floor 10');
+  // "unit's level" / "units level" → "floor" keyword so parser picks it up
+  s=s.replace(/\bunits?\s*[''']?\s*level\b/gi,'floor');
+  s=s.replace(/\bwhich is (the\s*)?floor\b/gi,'floor');
+
+  return s;
+}
+
+// ── TTS text cleaner — expand DB short forms so Harvey speaks properly ──
+function cleanForSpeech(txt){
+  let s=txt.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+  s=expandStreetAbbr(s); // ST → STREET, AVE → AVENUE etc
+  s=s.replace(/\bBLK\b/g,'Block');
+  s=s.replace(/\$(\d{1,3}(?:,\d{3})*)/g,(m,n)=>n.replace(/,/g,'')+' dollars');
+  return s;
+}
+
+function buildRecog(){
+  if(!SR)return null;
+  const r=new SR();
+  r.continuous=false;
+  r.interimResults=true;
+  r.lang='en-SG';
+  r.onstart=()=>{
+    recogBusy=true;
+    if(micState==='query'){
+      mbEl.classList.add('active');
+      vsBar.style.display='flex';
+      vsTxt.textContent='HARVEY LISTENING…';
+    }
+  };
+  r.onresult=e=>{
+    let interim='',final='';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      if(e.results[i].isFinal)final+=e.results[i][0].transcript;
+      else interim+=e.results[i][0].transcript;
+    }
+    const heard=(final||interim).trim();
+
+    if(micState==='wake'){
+      if(/wake.?up.?harvey|hey.?harvey|ok.?harvey/i.test(heard)){
+        if(isIdle){wakeFromIdle();}
+        else{
+          const rep=rand(['Yes sir.','At your service, sir.','Go ahead, sir.']);
+          harveyMsg(rep,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+          speak(rep);mode='menu';
+          setTimeout(()=>{micState='query';safeStart();},1200);
+        }
+        resetIdle();
+      }
+    } else if(micState==='query'){
+      // Show interim in real time so user sees Harvey is hearing them
+      if(interim){
+        vsTxt.textContent='HEARING: '+interim.toUpperCase();
+        ciEl.value=interim;
+        // Reset the silence timer — user is still speaking
+        clearTimeout(speechTimer);
+        speechTimer=setTimeout(()=>{
+          // 4 seconds of silence after last interim = user finished speaking
+          if(ciEl.value.trim()){
+            const normalised=normalizeSpeech(ciEl.value);
+            ciEl.value=normalised;
+            handleInput();
+          }
+        },4000);
+      }
+      if(final){
+        // Final result — wait 1.5s more before processing (give user time to continue if needed)
+        clearTimeout(speechTimer);
+        const normalised=normalizeSpeech(final);
+        ciEl.value=normalised;
+        vsTxt.textContent='HEARD: '+normalised.toUpperCase();
+        speechTimer=setTimeout(()=>handleInput(),1500);
+      }
+    }
+  };
+  r.onerror=e=>{
+    recogBusy=false;clearTimeout(speechTimer);
+    if(e.error==='not-allowed'||e.error==='service-not-allowed'){
+      vsSup.textContent='MIC BLOCKED — allow in browser';vsSup.style.color='var(--r)';micState='off';return;
+    }
+    if(micState!=='off')setTimeout(()=>safeStart(),1200);
+  };
+  r.onend=()=>{
+    recogBusy=false;mbEl.classList.remove('active');vsBar.style.display='none';
+    // Don't immediately restart if speech timer is pending (user may still be pausing mid-sentence)
+    if(micState==='wake'){setTimeout(()=>safeStart(),300);}
+    else if(micState==='query'){
+      // Wait for speech timer to fire before dropping back to wake
+      setTimeout(()=>{
+        if(!speechTimer){micState='wake';safeStart();}
+        else{
+          // Timer still running — stay in query mode, let timer handle it
+          const orig=speechTimer;
+          speechTimer=setTimeout(()=>{
+            if(ciEl.value.trim())handleInput();
+            micState='wake';setTimeout(()=>safeStart(),600);
+          },1500);
+        }
+      },200);
+    }
+  };
+  return r;
+}
+function safeStart(){if(recogBusy||micState==='off'||!SR)return;recog=buildRecog();try{recog.start();}catch(e){setTimeout(()=>safeStart(),1500);}}
+function toggleMic(){
+  if(!SR){alert('Use Chrome or Edge for voice');return;}
+  if(micState==='query'){
+    clearTimeout(speechTimer);speechTimer=null;
+    micState='wake';try{recog?.abort();}catch(e){}
+  }else{
+    micState='query';try{recog?.abort();}catch(e){}
+    setTimeout(()=>safeStart(),200);
+  }
+}
+
+if(SR){
+  vsSup.textContent='SAY "WAKE UP HARVEY" OR CLICK 🎤';vsSup.style.color='var(--g)';
+  micState='wake';setTimeout(()=>safeStart(),3000);
+}else{mbEl.style.display='none';vsSup.textContent='USE CHROME/EDGE FOR VOICE';vsSup.style.color='var(--a)';}
+
+// ── BOOT ──
+window.addEventListener('load',async()=>{
+  // Start loading Kokoro model in background — non-blocking
+  loadKokoro(); // ~85MB download, cached after first time
+  setTimeout(()=>{
+    document.getElementById('welcome')?.remove();
+    const boot=document.createElement('div');boot.className='msg-ai';
+    boot.innerHTML=`<span class="mlbl">// SYSTEM BOOT</span>
+      <div class="mbub" style="font-family:var(--mono);font-size:11px;line-height:2.2;color:var(--t2)">
+        <span style="color:var(--g)">▸</span> HARVEY ONLINE<br>
+        <span style="color:var(--g)">▸</span> BLOCKSENSE DATABASE CONNECTING<br>
+        <span style="color:var(--g)">▸</span> HDB RESALE ENGINE READY<br>
+        <span style="color:var(--g)">▸</span> VOICE ENGINE LOADED<br>
+        <span style="color:var(--c)">▸</span> <strong style="color:var(--c)">ALL SYSTEMS ONLINE</strong>
+      </div>`;
+    msgsEl.appendChild(boot);bot();
+    speak(rand(['Good day, sir.','Welcome back, sir.','Harvey online, sir.']));
+  },400);
+
+  // Load data in background
+  const ok=await loadData();
+
+  setTimeout(()=>{
+    if(ok){
+      harveyMsg(`What would you like to do, sir? I have <strong>${DB.resale.length.toLocaleString()}</strong> HDB resale transactions ready.`,[
+        {label:'RESALE TRANSACTIONS',val:'search'},
+        {label:'ESTIMATE VALUE',val:'estimate value'}
+      ]);
+    } else {
+      harveyMsg('Data connection failed, sir. Please refresh the page.',[]);
+    }
+    resetIdle();mode='menu';
+  },2600);
+});
+</script>
+</body>
+</html>
