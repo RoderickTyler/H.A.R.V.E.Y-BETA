@@ -349,7 +349,6 @@ tr:hover td{background:rgba(0,212,255,.03)}
       <div><span class="lname">BLOCKSENSE</span><span class="lsub">HARVEY · HDB ANALYTICS & RESEARCH VALUATION ENGINE FOR YOU</span></div>
     </div>
     <div class="tb-right" id="tb-right">
-      <button class="restart-btn" onclick="chipClick('__restart__')" title="Restart conversation">↺ RESTART</button>
       <div><div class="tb-time" id="clk">--:--:--</div><div class="tb-date" id="dt">---</div></div>
       <div class="live-pill"><div class="ldot"></div>LIVE · FREE</div>
     </div>
@@ -1458,9 +1457,10 @@ function harveyMsg(html,chips=[]){
   document.getElementById('welcome')?.remove();
   const d=document.createElement('div');d.className='msg-ai';
   const ch=chips.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${chips.map(c=>`<span class="chip" onclick="chipClick('${c.val.replace(/'/g,"\\'")}')">▶ ${c.label}</span>`).join('')}</div>`:'';
-  // Stop speech button — only if voice is on
+  // Stop + Restart buttons — inline beside message label
   const stopBtn=`<button class="stop-btn" onclick="stopSpeech()" title="Stop Harvey speaking">⏹ STOP</button>`;
-  d.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:8px;justify-content:space-between"><span>// HARVEY</span>${stopBtn}</span><div class="mbub">${html}${ch}</div>`;
+  const restartBtn=`<button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.06);border-color:rgba(255,170,0,.25)" onclick="chipClick('__restart__')" title="Restart conversation">↺ NEW</button>`;
+  d.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:6px;justify-content:space-between"><span>// HARVEY</span><span style="display:flex;gap:4px">${stopBtn}${restartBtn}</span></span><div class="mbub">${html}${ch}</div>`;
   msgsEl.appendChild(d);bot();
 }
 function userMsg(text){
@@ -2462,18 +2462,13 @@ async function handleInput(){
       speak(`I'm afraid the data and numbers present themselves as such, sir. The estimate reflects actual recorded transactions. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
       loading=false;sbEl.disabled=false;return;
     }
-    // ── Out-of-scope question detection ──
-    // If the input looks like a question about something unrelated to HDB resale/valuation
-    const isOutOfScope=/\b(how do i|how to|what is|what are|can you|do you|tell me about|explain|advice|should i|legal|loan|cpf|mortgage|stamp duty|grant|bto|rental|rent|agent fee|commission|property tax|renovation|insurance|fire sale|en bloc|hdb eligibility|mop|minimum occupation|foreigner|pr status|ownership|transfer|decoupling|lawyer|conveyancing|irs|income tax|investment|financial|bank|interest rate|afford|calculator|school|school bus|nearby|mrt|bus|transport|hawker|mall|food|park|gym|pool|amenities|noise|neighbour|feedback|complaint|repair|defect|town council|hdb portal|my hdb|singpass|form|application|register|book|hle|hdb loan|bank loan|downpayment|cash over valuation|cov)\b/i.test(raw);
-    const looksLikeQuestion=/\?|^(what|who|when|where|why|how|is there|are there|can i|should i|do i need|will|would|could|does|did)\b/i.test(raw.trim());
-    if((isOutOfScope||(looksLikeQuestion&&!parsed.town&&!parsed.flatType&&!parsed.street&&!parsed.block&&!parsed.floor&&!parsed.size))&&!isReaction){
-      const outOfScopeReplies=[
-        `I'm afraid that's a little beyond my capabilities, sir — I'm best equipped for HDB resale transactions and valuations. For that question, you'd really be better served by a professional agent who can advise you properly. Would you like to speak to one? <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
-        `That's outside my scope, I'm afraid, sir — I'm a resale data and valuation engine, not a general property advisor. I wouldn't want to steer you wrong on that. A licensed agent would be far better placed to help. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Feel free to WhatsApp us for clarity →</a>`,
-        `Apologies, sir — that's a bit beyond what I'm built for. My expertise is HDB resale transaction data and estimated values. For your question, I'd recommend speaking to a professional. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here and we'd be happy to assist →</a>`
-      ];
-      harveyMsg(rand(outOfScopeReplies),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-      speak(`I'm afraid that's a little beyond my capabilities, sir. For that question, you'd be better served by a professional agent. Feel free to WhatsApp us for clarity.`);
+    // ── Out-of-scope detection — local classifier, zero latency ──
+    if(harveyKnows.isOutOfScope(raw,parsed)&&!isReaction){
+      harveyMsg(
+        `I'm afraid I can't help you with that, sir. Let me direct you to someone who can — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+        [{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]
+      );
+      speak(`I'm afraid I can't help you with that, sir. Let me direct you to someone who can.`);
       loading=false;sbEl.disabled=false;return;
     }
     harveyMsg('How can I help, sir?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
@@ -2484,6 +2479,92 @@ async function handleInput(){
 
 function chipClick(val){ciEl.value=val;handleInput();}
 function sendMessage(){handleInput();}
+
+// ── HARVEY INTENT CLASSIFIER — built on load, zero latency, no external calls ──
+// Trained on out-of-scope topics Harvey should politely redirect.
+// Uses a weighted token set: a question scores 1pt per match; threshold=1 fires redirect.
+// In-scope HDB terms act as negative signals to prevent false positives.
+const harveyKnows=(()=>{
+  // Out-of-scope topic tokens — anything Harvey can't answer from resale data
+  const OOS_TOKENS=new Set([
+    // Finance / loans
+    'loan','loans','cpf','mortgage','interest','rate','rates','downpayment','down payment',
+    'cash over valuation','cov','stamp duty','bsd','absd','ssd','legal fee','legal fees',
+    'bank','dbs','ocbc','uob','maybank','hsbc','hle','hdb loan','bank loan','affordability',
+    'afford','monthly instalment','instalment','monthly payment','financing','refinance',
+    'interest rate','fixed rate','floating rate','sibor','sora','fdsr','tdsr','msr',
+    // Grants & eligibility
+    'grant','grants','ahg','shg','phg','enhanced cpf','cpf housing','eligible','eligibility',
+    'hdb eligibility','income ceiling','household income','mop','minimum occupation period',
+    'singles scheme','fiancee scheme','joint singles','fiance','married','divorce','divorced',
+    // Legal / ownership
+    'lawyer','conveyancing','legal','ownership','transfer','decoupling','decouple',
+    'power of attorney','poa','probate','will','intestate','estate','beneficiary',
+    'foreigner','pr','permanent resident','spr','citizenship','nationality','ep','s pass',
+    // Rental
+    'rent','rental','tenant','landlord','sublet','subletting','lease out','hdb rental',
+    'room rental','whole unit rental','tenancy','tenancy agreement',
+    // BTO / new flat
+    'bto','balance flat','dbss','ec','executive condominium','new flat','new launch',
+    'ballot','balloting','queue','waitlist','hdb queue',
+    // Renovation / defects
+    'renovation','reno','contractor','hdb defect','defect','rectification','tiles',
+    'hack','hacking','ID','interior design','designer','flooring','painting',
+    // Nearby / amenities
+    'mrt','lrt','bus stop','bus route','transport','school','primary school','secondary school',
+    'school bus','hawker','food court','mall','shopping','park','garden','gym','pool',
+    'swimming pool','playground','clinic','hospital','amenities','nearby','distance',
+    'walk to','near','how far','surroundings',
+    // HDB portal / process
+    'hdb portal','my hdb','myhdb','singpass','login','apply','application','appointment',
+    'booking','book a flat','register','queue number','hdb resale portal','otp',
+    'option to purchase','completion','keys','collection','flat inspection',
+    // Agents / fees
+    'agent fee','commission','agent commission','co-broke','cobroke','exclusive',
+    'property agent','rea','cea','propnex','era','huttons','orangetee',
+    // Tax / investment
+    'property tax','iras','income tax','investment','roi','return on investment',
+    'en bloc','enbloc','collective sale','condo','private property','landed',
+    // General advice
+    'should i buy','should i sell','good time','bad time','market prediction',
+    'market outlook','forecast','advice','recommend','recommend me','what do you think',
+    'is it worth','is now a good','pros and cons','comparison'
+  ]);
+
+  // In-scope terms — these cancel out an OOS match (prevent false positives)
+  const INSCOPE_TOKENS=new Set([
+    'resale','transaction','transact','price','value','valuation','estimate','search',
+    'block','blk','street','floor','flat type','room','town','sqm','floor area',
+    'storey','lease','recent','sold','sale','tampines','clementi','bedok','bishan',
+    'jurong','yishun','woodlands','sengkang','punggol','hougang','queenstown',
+    'kallang','serangoon','bukit','geylang','ang mo kio','toa payoh','pasir ris'
+  ]);
+
+  // Pre-tokenise: split input into lowercase words/bigrams for fast matching
+  function tokenise(str){
+    const s=str.toLowerCase().replace(/[^a-z0-9 ]/g,' ');
+    const words=s.split(/\s+/).filter(w=>w.length>1);
+    const bigrams=[];
+    for(let i=0;i<words.length-1;i++)bigrams.push(words[i]+' '+words[i+1]);
+    return new Set([...words,...bigrams]);
+  }
+
+  return{
+    isOutOfScope(raw,parsed){
+      const tokens=tokenise(raw);
+      // If any in-scope term is present, trust Harvey to handle it
+      for(const t of tokens){if(INSCOPE_TOKENS.has(t))return false;}
+      // Count OOS matches
+      let score=0;
+      for(const t of tokens){if(OOS_TOKENS.has(t))score++;}
+      // Also catch plain question patterns with no HDB content at all
+      const isPlainQuestion=/\?$|^(what|who|when|where|why|how|is there|are there|can i|should i|do i need|will i|would i|could i|does hdb|did hdb)\b/i.test(raw.trim());
+      const hasNoHDBContent=!parsed?.town&&!parsed?.flatType&&!parsed?.street&&!parsed?.block&&!parsed?.floor&&!parsed?.size;
+      if(isPlainQuestion&&hasNoHDBContent&&score===0)score=1; // plain off-topic question
+      return score>=1;
+    }
+  };
+})();
 
 // ── IDLE TIMER ──
 const IDLE_MS=10*60*1000;let idleTimer=null,isIdle=false;
