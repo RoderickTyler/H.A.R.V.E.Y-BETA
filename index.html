@@ -2177,6 +2177,32 @@ async function handleInput(){
     // Check if user is reacting to a previous result rather than giving new info
     const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
     const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice;
+
+    // ── Mid-conversation hostility check ──
+    const midSent=harveyKnows.sentiment(raw);
+    if(midSent.hostile&&!hasNewInfo){
+      // Pure hostility — no new info — apologise graciously then stay in current flow
+      const gracious=rand([
+        `My sincerest apologies, sir — I clearly haven't been as helpful as you needed. I do mean well. Whenever you're ready, I'm still here to assist with your HDB query.`,
+        `I'm sorry to have caused frustration, sir. That was not my intention at all. Please do let me know what you need and I'll do my very best.`,
+        `Noted, sir, and I apologise unreservedly. Let's start fresh — what would you like to know?`
+      ]);
+      harveyMsg(gracious,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'},{label:'↺ START OVER',val:'__restart__'}]);
+      speak(`My sincerest apologies, sir. I clearly haven't been as helpful as you needed. Whenever you're ready, I'm still here.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+    if(midSent.hostile&&hasNewInfo){
+      // Hostility BUT there's real info in there — apologise briefly, then process
+      const apology=rand([
+        `My apologies, sir — allow me to address that for you:`,
+        `I'm sorry you feel that way, sir. Let me assist with what I can:`,
+        `Duly noted, and my apologies. Here's what I have:`
+      ]);
+      harveyMsg(apology);
+      speak(`My apologies, sir. Allow me to assist.`);
+      await new Promise(r=>setTimeout(r,500));
+    }
+
     if(isReaction&&!hasNewInfo){
       const replies=[
         `I'm afraid the data and numbers present themselves as such, sir. The estimate is based on actual resale transactions — I can only work with what the market has transacted. For a more grounded view, you may want a professional agent for the on-the-ground sensing. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
@@ -2446,10 +2472,54 @@ async function handleInput(){
     }
     mode='ev_waiting';promptMissing(ctx);
   }else if(ctx.town||ctx.street||ctx.block||/transact|search|recent|sales?|sold|show|find/i.test(raw)){
+
+    // ── Check for frustration mixed with a real HDB question ──
+    const sentResult=harveyKnows.sentiment(raw);
+    if(sentResult.hostile&&sentResult.hasHDBContent){
+      // Apologise briefly, then still serve the answer
+      const apology=rand([
+        `My apologies if I've frustrated you, sir — that was never my intention. Allow me to assist:`,
+        `I'm sorry you feel that way, sir. Let me make it up to you with the data:`,
+        `Duly noted, sir — my sincere apologies. Here's what I have for you:`
+      ]);
+      harveyMsg(apology);
+      speak(`My apologies if I've frustrated you, sir. Allow me to assist.`);
+      await new Promise(r=>setTimeout(r,600));
+    }
+
     ctx.isEV=false;mode='srch_waiting';promptMissing(ctx);
+
   }else{
+    // ── Sentiment check FIRST — hostile with no HDB content ──
+    const sentResult=harveyKnows.sentiment(raw);
+    if(sentResult.hostile&&!sentResult.hasHDBContent){
+      const gracious=rand([
+        `I do apologise if I've been of little help, sir — though I must say, I've heard worse. I hope the rest of your day treats you considerably better. If there's anything HDB-related I can assist with, I remain at your service.`,
+        `My sincerest apologies you feel that way, sir. I shall not take it personally — I am, after all, merely a very well-dressed database. Should you need resale data or a valuation, I'll be right here.`,
+        `Noted, sir — and I hope you feel better for having said it. I bear no ill will whatsoever. Whenever you're ready to talk HDB, I'm at your disposal.`,
+        `I understand the frustration, sir, and I apologise unreservedly. Between us — I've been called worse by better. Do come back when you're ready and I'll do my very best to assist.`,
+        `Fair enough, sir. I shan't argue. I hope your day improves considerably from here — and if there's a resale transaction or valuation I can help with later, the offer stands.`
+      ]);
+      harveyMsg(gracious,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+      speak(`My sincerest apologies you feel that way, sir. I hope the rest of your day treats you considerably better.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+
+    // ── Frustration mixed with HDB context in the else branch ──
+    if(sentResult.hostile&&sentResult.hasHDBContent){
+      const apology=rand([
+        `My apologies if I've frustrated you, sir — that was never my intention. Allow me to assist:`,
+        `I'm sorry you feel that way, sir. Let me make it up to you with the data:`,
+        `Duly noted, sir — my sincere apologies. Here's what I have for you:`
+      ]);
+      harveyMsg(apology);
+      speak(`My apologies if I've frustrated you, sir. Allow me to assist.`);
+      await new Promise(r=>setTimeout(r,600));
+      ctx.isEV=false;mode='srch_waiting';promptMissing(ctx);
+      loading=false;sbEl.disabled=false;return;
+    }
+
     // ── Harvey's natural response when user questions/doubts/reacts after a result ──
-    // Detect frustration, doubt or surprise about the result
     const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
     if(isReaction&&(mode==='menu'||mode==='srch_waiting'||mode==='ev_waiting')){
       const replies=[
@@ -2463,12 +2533,11 @@ async function handleInput(){
       loading=false;sbEl.disabled=false;return;
     }
     // ── Out-of-scope detection — local classifier, zero latency ──
-    if(harveyKnows.isOutOfScope(raw,parsed)&&!isReaction){
-      harveyMsg(
-        `I'm afraid I can't help you with that, sir. Let me direct you to someone who can — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
-        [{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]
-      );
-      speak(`I'm afraid I can't help you with that, sir. Let me direct you to someone who can.`);
+    const oosResult=harveyKnows.classify(raw);
+    if(oosResult&&!isReaction){
+      const quip=harveyKnows.quip(raw,oosResult);
+      harveyMsg(quip,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+      speak(`I'm afraid I can't help you with that, sir. Let me direct you to someone who can assist you on it.`);
       loading=false;sbEl.disabled=false;return;
     }
     harveyMsg('How can I help, sir?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
@@ -2481,87 +2550,243 @@ function chipClick(val){ciEl.value=val;handleInput();}
 function sendMessage(){handleInput();}
 
 // ── HARVEY INTENT CLASSIFIER — built on load, zero latency, no external calls ──
-// Trained on out-of-scope topics Harvey should politely redirect.
-// Uses a weighted token set: a question scores 1pt per match; threshold=1 fires redirect.
-// In-scope HDB terms act as negative signals to prevent false positives.
+// classify(raw) returns a topic label string if OOS, or null if Harvey can handle it.
+// quip(raw, topic) builds a casual parrot-back response with the user's own words.
+// sentiment(raw) returns {hostile, sarcastic, hasHDBContent} for emotional routing.
 const harveyKnows=(()=>{
-  // Out-of-scope topic tokens — anything Harvey can't answer from resale data
-  const OOS_TOKENS=new Set([
-    // Finance / loans
-    'loan','loans','cpf','mortgage','interest','rate','rates','downpayment','down payment',
-    'cash over valuation','cov','stamp duty','bsd','absd','ssd','legal fee','legal fees',
-    'bank','dbs','ocbc','uob','maybank','hsbc','hle','hdb loan','bank loan','affordability',
-    'afford','monthly instalment','instalment','monthly payment','financing','refinance',
-    'interest rate','fixed rate','floating rate','sibor','sora','fdsr','tdsr','msr',
-    // Grants & eligibility
-    'grant','grants','ahg','shg','phg','enhanced cpf','cpf housing','eligible','eligibility',
-    'hdb eligibility','income ceiling','household income','mop','minimum occupation period',
-    'singles scheme','fiancee scheme','joint singles','fiance','married','divorce','divorced',
-    // Legal / ownership
-    'lawyer','conveyancing','legal','ownership','transfer','decoupling','decouple',
-    'power of attorney','poa','probate','will','intestate','estate','beneficiary',
-    'foreigner','pr','permanent resident','spr','citizenship','nationality','ep','s pass',
-    // Rental
-    'rent','rental','tenant','landlord','sublet','subletting','lease out','hdb rental',
-    'room rental','whole unit rental','tenancy','tenancy agreement',
-    // BTO / new flat
-    'bto','balance flat','dbss','ec','executive condominium','new flat','new launch',
-    'ballot','balloting','queue','waitlist','hdb queue',
-    // Renovation / defects
-    'renovation','reno','contractor','hdb defect','defect','rectification','tiles',
-    'hack','hacking','ID','interior design','designer','flooring','painting',
-    // Nearby / amenities
-    'mrt','lrt','bus stop','bus route','transport','school','primary school','secondary school',
-    'school bus','hawker','food court','mall','shopping','park','garden','gym','pool',
-    'swimming pool','playground','clinic','hospital','amenities','nearby','distance',
-    'walk to','near','how far','surroundings',
-    // HDB portal / process
-    'hdb portal','my hdb','myhdb','singpass','login','apply','application','appointment',
-    'booking','book a flat','register','queue number','hdb resale portal','otp',
-    'option to purchase','completion','keys','collection','flat inspection',
-    // Agents / fees
-    'agent fee','commission','agent commission','co-broke','cobroke','exclusive',
-    'property agent','rea','cea','propnex','era','huttons','orangetee',
-    // Tax / investment
-    'property tax','iras','income tax','investment','roi','return on investment',
-    'en bloc','enbloc','collective sale','condo','private property','landed',
-    // General advice
-    'should i buy','should i sell','good time','bad time','market prediction',
-    'market outlook','forecast','advice','recommend','recommend me','what do you think',
-    'is it worth','is now a good','pros and cons','comparison'
+
+  // ── Hostile / rude tokens ──
+  const HOSTILE=new Set([
+    'screw you','screw off','screw this','f you','fu','fck','fk you','fk off',
+    'fuck you','fuck off','fuck this','fucker','fucking','fcuk',
+    'idiot','stupid','useless','rubbish','nonsense','trash','garbage',
+    'dumb','dumbass','moron','retard','idiocy','incompetent',
+    'terrible','awful','horrible','pathetic','disgusting','hate you',
+    'hate this','hate it','worst','lousy','crap','bullshit','bs',
+    'shut up','shut it','go away','get lost','piss off','bugger off',
+    'damn','damn you','dammit','wtf','what the hell','what the heck',
+    'bloody hell','bloody useless','sucks','this sucks','you suck',
+    'hopeless','useless bot','useless ai','broken','not working',
+    'waste of time','wasting my time','annoying','frustrating',
+    'liar','lying','wrong again','always wrong','keep getting it wrong',
+    'lanlan','siao','chao','nabei','knn','ccb','kpkb','knn','cb','lj',
+    'si mi','bodoh','bangang','bahlul','bengong','gila'
   ]);
 
-  // In-scope terms — these cancel out an OOS match (prevent false positives)
-  const INSCOPE_TOKENS=new Set([
-    'resale','transaction','transact','price','value','valuation','estimate','search',
-    'block','blk','street','floor','flat type','room','town','sqm','floor area',
-    'storey','lease','recent','sold','sale','tampines','clementi','bedok','bishan',
+  // ── Sarcasm signals — dismissive/ironic without full hostility ──
+  const SARCASM=new Set([
+    'oh great','oh wow','wow thanks','thanks for nothing','very helpful',
+    'so helpful','super helpful','really helpful','great job','well done',
+    'congratulations','congrats','brilliant','genius','amazing job',
+    'what a surprise','no kidding','obviously','sure sure','yeah right',
+    'sure thing','as expected','typical','of course','right right',
+    'good one','nice one','good job harvey','great harvey',
+    'thanks harvey','thank you so much','oh wonderful','oh fantastic',
+    'wow amazing','spectacular','incredible','unbelievable'
+  ]);
+
+  // ── In-scope HDB terms — signals a real question is mixed in ──
+  const HDB_SIGNALS=new Set([
+    'resale','transaction','transact','price','value','valuation','estimate',
+    'block','blk','street','floor','flat','room','town','sqm','storey',
+    'lease','recent','sold','sale','tampines','clementi','bedok','bishan',
     'jurong','yishun','woodlands','sengkang','punggol','hougang','queenstown',
-    'kallang','serangoon','bukit','geylang','ang mo kio','toa payoh','pasir ris'
+    'kallang','serangoon','bukit','geylang','ang mo kio','toa payoh',
+    'pasir ris','whampoa','crawford','tiong bahru','marine parade',
+    '3 room','4 room','5 room','2 room','executive','hdb'
   ]);
 
-  // Pre-tokenise: split input into lowercase words/bigrams for fast matching
+  // Each entry: [token/bigram, topic label shown in response]
+  // Topic label is what Harvey will parrot back to the user
+  const OOS=[
+    // ── Finance / loans ──
+    ['loan','loans'],['loans','loans'],['cpf','CPF'],['mortgage','mortgages'],
+    ['downpayment','downpayments'],['down payment','downpayments'],
+    ['stamp duty','stamp duty'],['bsd','BSD'],['absd','ABSD'],['ssd','SSD'],
+    ['legal fee','legal fees'],['legal fees','legal fees'],
+    ['bank','bank matters'],['dbs','bank matters'],['ocbc','bank matters'],
+    ['uob','bank matters'],['maybank','bank matters'],['hsbc','bank matters'],
+    ['hle','HLE'],['hdb loan','HDB loans'],['bank loan','bank loans'],
+    ['affordability','affordability checks'],['afford','affordability'],
+    ['instalment','loan instalments'],['monthly payment','monthly payments'],
+    ['financing','financing'],['refinance','refinancing'],
+    ['interest rate','interest rates'],['fixed rate','fixed rate packages'],
+    ['floating rate','floating rate packages'],['sibor','SIBOR'],
+    ['sora','SORA'],['tdsr','TDSR'],['msr','MSR'],
+    // ── Grants & eligibility ──
+    ['grant','grants'],['grants','grants'],['ahg','AHG'],['shg','SHG'],
+    ['eligible','eligibility checks'],['eligibility','eligibility checks'],
+    ['income ceiling','income ceilings'],['household income','household income checks'],
+    ['mop','MOP'],['minimum occupation','MOP requirements'],
+    ['singles scheme','Singles Scheme'],['married','marriage eligibility'],
+    ['divorce','divorce matters'],
+    // ── Legal / ownership ──
+    ['lawyer','legal matters'],['conveyancing','conveyancing'],
+    ['legal','legal matters'],['ownership','ownership transfers'],
+    ['transfer','ownership transfers'],['decoupling','decoupling'],
+    ['power of attorney','POA matters'],['probate','probate'],
+    ['foreigner','foreigner eligibility'],['permanent resident','PR eligibility'],
+    ['citizenship','citizenship matters'],
+    // ── Rental ──
+    ['rent','rentals'],['rental','rentals'],['tenant','tenancy matters'],
+    ['landlord','landlord matters'],['sublet','subletting'],
+    ['tenancy','tenancy agreements'],
+    // ── BTO / new flats ──
+    ['bto','BTO applications'],['ballot','balloting'],['balloting','balloting'],
+    ['queue','queue numbers'],['waitlist','waitlists'],
+    ['new flat','new flat applications'],['new launch','new launches'],
+    // ── Renovation ──
+    ['renovation','renovations'],['reno','renovations'],
+    ['contractor','contractors'],['interior design','interior design'],
+    ['flooring','flooring choices'],['painting','painting jobs'],
+    ['defect','defect rectification'],['hdb defect','defect rectification'],
+    // ── Amenities / transport ──
+    ['mrt','MRT stations'],['lrt','LRT stations'],['bus stop','bus stops'],
+    ['bus route','bus routes'],['transport','transport options'],
+    ['school','schools nearby'],['primary school','primary schools'],
+    ['hawker','hawker centres'],['food court','food courts'],
+    ['mall','malls nearby'],['shopping','shopping options'],
+    ['park','parks nearby'],['gym','gyms nearby'],['pool','swimming pools'],
+    ['clinic','clinics nearby'],['hospital','hospitals nearby'],
+    ['amenities','nearby amenities'],['nearby','nearby amenities'],
+    // ── HDB portal / process ──
+    ['singpass','SingPass matters'],['my hdb','MyHDB portal'],
+    ['hdb portal','HDB portal'],['apply','HDB applications'],
+    ['appointment','HDB appointments'],['otp','OTP matters'],
+    ['option to purchase','OTP matters'],['keys','key collection'],
+    ['flat inspection','flat inspections'],
+    // ── Agents / fees ──
+    ['agent fee','agent fees'],['commission','agent commissions'],
+    ['cobroke','co-broking'],['property agent','property agents'],
+    ['propnex','property agents'],['era','property agents'],
+    ['huttons','property agents'],['orangetee','property agents'],
+    // ── Tax / investment ──
+    ['property tax','property tax'],['income tax','income tax'],
+    ['investment','property investment'],['roi','ROI calculations'],
+    ['en bloc','en bloc matters'],['enbloc','en bloc matters'],
+    ['condo','condominiums'],['private property','private properties'],
+    ['landed','landed properties'],
+    // ── General property advice ──
+    ['should i buy','buying decisions'],['should i sell','selling decisions'],
+    ['good time to buy','market timing'],['good time to sell','market timing'],
+    ['market prediction','market predictions'],['market outlook','market outlooks'],
+    ['forecast','market forecasts'],['advice','property advice'],
+    ['pros and cons','pros and cons analysis'],['comparison','property comparisons'],
+    // ── Completely random / everyday life ──
+    ['weather','the weather'],['temperature','the temperature'],
+    ['rain','the rain'],['sunny','the sunshine'],['haze','haze levels'],
+    ['date','the date'],['time','the time'],['day','the day of the week'],
+    ['clock','the time'],['calendar','the calendar'],
+    ['grandmother','your grandmother'],['grandma','your grandma'],
+    ['grandfather','your grandfather'],['grandpa','your grandpa'],
+    ['mother','your mother'],['father','your father'],['family','your family'],
+    ['wife','your wife'],['husband','your husband'],['children','your children'],
+    ['baby','babies'],['pregnant','pregnancy'],['pet','pets'],
+    ['dog','dogs'],['cat','cats'],['bird','birds'],['fish','fish'],
+    ['beer','beer'],['wine','wine'],['whisky','whisky'],['drink','drinks'],
+    ['food','food'],['recipe','recipes'],['cook','cooking'],
+    ['dinner','dinner plans'],['lunch','lunch plans'],['breakfast','breakfast'],
+    ['restaurant','restaurants'],['café','cafés'],['coffee','coffee'],
+    ['movie','movies'],['film','films'],['netflix','Netflix'],
+    ['music','music'],['song','songs'],['concert','concerts'],
+    ['game','games'],['sports','sports'],['football','football'],
+    ['soccer','soccer'],['basketball','basketball'],['tennis','tennis'],
+    ['holiday','holidays'],['travel','travel'],['flight','flights'],
+    ['hotel','hotels'],['vacation','vacations'],['airbnb','Airbnb'],
+    ['health','health matters'],['doctor','doctors'],['medicine','medicine'],
+    ['sick','being unwell'],['covid','COVID'],['fever','fevers'],
+    ['exercise','exercise'],['diet','diets'],['weight','weight matters'],
+    ['fashion','fashion'],['clothes','clothing'],['shopping','shopping'],
+    ['phone','phones'],['laptop','laptops'],['computer','computers'],
+    ['internet','the internet'],['wifi','WiFi'],['password','passwords'],
+    ['joke','jokes'],['funny','something funny'],['laugh','a laugh'],
+    ['love','love matters'],['relationship','relationships'],['dating','dating'],
+    ['friend','friends'],['birthday','birthdays'],['party','parties'],
+    ['politics','politics'],['government','government matters'],['election','elections'],
+    ['news','the news'],['headline','headlines'],['singapore news','Singapore news'],
+    ['horoscope','horoscopes'],['zodiac','zodiac signs'],['lucky number','lucky numbers'],
+    ['ghost','ghosts'],['haunted','haunted places'],['feng shui','feng shui'],
+    ['hello','greetings'],['how are you','how Harvey is doing'],
+    ['what are you','what Harvey is'],['who are you','who Harvey is'],
+    ['are you human','whether Harvey is human'],['are you real','whether Harvey is real'],
+    ['do you feel','Harvey\'s feelings'],['do you eat','Harvey\'s diet'],
+    ['are you happy','Harvey\'s happiness'],['do you sleep','Harvey\'s sleep habits'],
+    ['can you dance','dancing'],['can you sing','singing'],
+    ['can you cook','cooking'],['can you drive','driving'],
+    ['tell me a joke','jokes'],['say something funny','humour'],
+    ['what is life','the meaning of life'],['meaning of life','the meaning of life'],
+    ['god','theology'],['religion','religion'],['pray','prayers'],
+    ['astrology','astrology'],['tarot','tarot readings'],
+    ['stock','stocks'],['crypto','crypto'],['bitcoin','Bitcoin'],
+    ['nft','NFTs'],['forex','forex trading'],['gold','gold prices'],
+  ];
+
+  // Build fast lookup: token → label
+  const OOS_MAP=new Map();
+  for(const[tok,label]of OOS)OOS_MAP.set(tok.toLowerCase(),label);
+
+  // In-scope HDB terms — cancel out any OOS match
+  const INSCOPE=new Set([
+    'resale','transaction','transact','price','value','valuation','estimate','search',
+    'block','blk','street','floor','flat type','4 room','3 room','5 room','2 room',
+    'executive','town','sqm','floor area','storey','recent','sold','sale',
+    'tampines','clementi','bedok','bishan','jurong','yishun','woodlands',
+    'sengkang','punggol','hougang','queenstown','kallang','serangoon',
+    'bukit','geylang','ang mo kio','toa payoh','pasir ris','whampoa',
+    'crawford','tiong bahru','marine parade','buona vista','dover'
+  ]);
+
   function tokenise(str){
-    const s=str.toLowerCase().replace(/[^a-z0-9 ]/g,' ');
+    const s=str.toLowerCase().replace(/[^a-z0-9 ']/g,' ');
     const words=s.split(/\s+/).filter(w=>w.length>1);
     const bigrams=[];
     for(let i=0;i<words.length-1;i++)bigrams.push(words[i]+' '+words[i+1]);
-    return new Set([...words,...bigrams]);
+    const trigrams=[];
+    for(let i=0;i<words.length-2;i++)trigrams.push(words[i]+' '+words[i+1]+' '+words[i+2]);
+    return[...words,...bigrams,...trigrams];
   }
 
+  // Casual quip templates — Harvey parrots back what was asked
+  const QUIPS=[
+    (topic,raw)=>`Ha — "${esc(raw.length>60?raw.slice(0,57)+'…':raw)}", sir? I'm afraid ${topic} is a little outside my lane. I deal in HDB resale data, not life's other great mysteries. Let me direct you to someone who can assist — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+    (topic,raw)=>`"${esc(raw.length>55?raw.slice(0,52)+'…':raw)}" — I appreciate the curiosity, sir, but ${topic} is quite beyond what I was built for. I'm strictly a resale data machine. Let me direct you to someone who can assist — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+    (topic,raw)=>`${topic}, sir? That one's not in my database, I'm afraid — and believe me, it's quite a database. I can't help you with ${topic}, but someone else certainly can — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+    (topic,raw)=>`I'm afraid I can't help you with ${topic}, sir — I wouldn't want to embarrass myself trying. HDB resale data, yes. Everything else? Let me direct you to someone who can assist — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+  ];
+
   return{
-    isOutOfScope(raw,parsed){
+    sentiment(raw){
+      const s=raw.toLowerCase().replace(/[^a-z0-9 ']/g,' ');
+      const words=s.split(/\s+/).filter(w=>w.length>0);
+      const bigrams=[];
+      for(let i=0;i<words.length-1;i++)bigrams.push(words[i]+' '+words[i+1]);
+      const trigrams=[];
+      for(let i=0;i<words.length-2;i++)trigrams.push(words[i]+' '+words[i+1]+' '+words[i+2]);
+      const all=[...words,...bigrams,...trigrams];
+
+      let hostile=false,sarcastic=false,hasHDBContent=false;
+      for(const t of all){
+        if(HOSTILE.has(t))hostile=true;
+        if(SARCASM.has(t))sarcastic=true;
+        if(HDB_SIGNALS.has(t))hasHDBContent=true;
+      }
+      return{hostile,sarcastic,hasHDBContent};
+    },
+    classify(raw){
       const tokens=tokenise(raw);
-      // If any in-scope term is present, trust Harvey to handle it
-      for(const t of tokens){if(INSCOPE_TOKENS.has(t))return false;}
-      // Count OOS matches
-      let score=0;
-      for(const t of tokens){if(OOS_TOKENS.has(t))score++;}
-      // Also catch plain question patterns with no HDB content at all
-      const isPlainQuestion=/\?$|^(what|who|when|where|why|how|is there|are there|can i|should i|do i need|will i|would i|could i|does hdb|did hdb)\b/i.test(raw.trim());
-      const hasNoHDBContent=!parsed?.town&&!parsed?.flatType&&!parsed?.street&&!parsed?.block&&!parsed?.floor&&!parsed?.size;
-      if(isPlainQuestion&&hasNoHDBContent&&score===0)score=1; // plain off-topic question
-      return score>=1;
+      // If any in-scope HDB term — let Harvey handle
+      for(const t of tokens){if(INSCOPE.has(t))return null;}
+      // Find first OOS match and return its label
+      for(const t of tokens){
+        const label=OOS_MAP.get(t);
+        if(label)return label;
+      }
+      return null;
+    },
+    quip(raw,topic){
+      // Pick a random quip template
+      const fn=QUIPS[Math.floor(Math.random()*QUIPS.length)];
+      return fn(topic,raw);
     }
   };
 })();
