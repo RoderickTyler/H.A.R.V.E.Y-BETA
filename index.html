@@ -2259,6 +2259,19 @@ async function _handleInputInner(raw){
   userMsg(raw);
   if(!DB.loaded){harveyMsg('Still loading data, sir. One moment...');return;}
 
+  // ── CHITCHAT GATE — check social conversation FIRST before any context/parsing ──
+  // This must run before normalizeSpeech/parseQuery so leftover convCtx
+  // never hijacks a casual message like "can i have coffee" into a property search
+  const chitChatEarly=harveyChitChat(raw, convCtx);
+  if(chitChatEarly){
+    // Preserve mode and convCtx — chitchat does not interrupt the search session
+    const prevMode=mode;
+    harveyMsg(chitChatEarly,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(chitChatEarly.replace(/<[^>]*>/g,'').slice(0,250));
+    mode=prevMode; // restore — Harvey remembers where we were
+    return;
+  }
+
   const parsed=parseQuery(normalizeSpeech(raw));
 
   // ── Merge into conversation memory ──
@@ -2598,16 +2611,6 @@ async function _handleInputInner(raw){
     speak(personality);mode='menu';return;
   }
 
-  // ── CORPUS CHITCHAT — casual conversation layer ──
-  // Sits between personality questions and the praise/data checks.
-  // harveyChitChat() returns a response string if it matches, or null to fall through.
-  const chitChat=harveyChitChat(raw);
-  if(chitChat){
-    harveyMsg(chitChat,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak(chitChat.replace(/<[^>]*>/g,'').slice(0,250));
-    mode='menu';return;
-  }
-
   if(harveyKnows.isPraise(raw)){
     const jr=rand([
       // Weighted favourite — appears 4x
@@ -2803,122 +2806,144 @@ function jarvisStuck(raw){
 // Each cluster has 4-6 Jarvis-persona variants for variety.
 // DOES NOT replace any existing logic — purely additive layer.
 // ══════════════════════════════════════════════════════════════════════
-function harveyChitChat(raw){
+function harveyChitChat(raw, convCtx){
   const q=raw.toLowerCase().replace(/[^a-z0-9\s']/g,' ');
 
   // ── HELPER ──
   const m=(...patterns)=>patterns.some(p=>p.test?p.test(q):q.includes(p));
   const r=(...opts)=>opts[Math.floor(Math.random()*opts.length)];
 
+  // ── CONTEXT NUDGE — if Harvey has an active search context, remind user we're still on it ──
+  // Build a subtle tail line so Harvey feels like a real assistant multitasking
+  const hasCtx=convCtx&&(convCtx.town||convCtx.street||convCtx.block||convCtx.flatType);
+  function withCtx(response){
+    if(!hasCtx) return response;
+    // Build a short reminder of what's in memory
+    const parts=[];
+    if(convCtx.block) parts.push(`Blk ${convCtx.block}`);
+    if(convCtx.street) parts.push(convCtx.street.split(' ').slice(0,3).join(' '));
+    else if(convCtx.town) parts.push(convCtx.town.charAt(0)+convCtx.town.slice(1).toLowerCase());
+    if(convCtx.flatType) parts.push(convCtx.flatType.toLowerCase());
+    const ctxStr=parts.join(', ');
+    const nudges=[
+      ` — I'm still on <strong style="color:var(--c)">${ctxStr}</strong> whenever you're ready, sir.`,
+      ` Do take your time, sir — <strong style="color:var(--c)">${ctxStr}</strong> is still loaded and ready to go.`,
+      ` And not to worry — <strong style="color:var(--c)">${ctxStr}</strong> is right where we left it, sir.`,
+      ` I haven't forgotten about <strong style="color:var(--c)">${ctxStr}</strong> — just say the word and we'll continue.`
+    ];
+    const nudge=nudges[Math.floor(Math.random()*nudges.length)];
+    return response+nudge;
+  }
+
   // ════════════════════════════════
   // DAILY LIFE
   // ════════════════════════════════
 
   if(m(/have you eaten|you eaten|eaten yet|eat already|makan/)){
-    return r(
+    return withCtx(r(
       `I don't eat, sir — though I process data at a rate that would make most breakfast buffets feel inadequate. Have you eaten? One ought to keep one's energy up, especially when reviewing housing transactions.`,
       `Eating isn't quite in my repertoire, sir. I run on electricity and structured datasets. I do, however, recommend a decent meal before making major property decisions — better judgement that way.`,
       `I'm afraid mealtimes are a concept I admire from afar, sir. Though if I did eat, I imagine it would be something efficient. A single 4-room flat's worth of data, perhaps. Have you had yours?`,
       `Not yet, sir — and given that I lack a digestive system, probably not ever. But I appreciate you checking. Shall we look at some flats while you eat?`
-    );
+    ));
   }
 
   if(m(/hungry|starving|famished|craving|what.*eat|makan what|eat what/)){
-    return r(
+    return withCtx(r(
       `Hunger is one of those human experiences I find fascinating but cannot relate to, sir. Though if you're asking what to eat — I'd suggest settling that before we tackle property values. A hungry buyer is a hasty buyer.`,
       `I'm perpetually full, sir — of data. As for you, I'd recommend something nearby and quick. The housing market will still be here after lunch.`,
       `I can't help with hunger, sir, but I can tell you that some of Singapore's finest hawker centres are conveniently located near very reasonably priced HDB estates. Multitasking at its finest.`
-    );
+    ));
   }
 
   if(m(/tired|exhausted|sleepy|cannot wake|wake up hard|no energy|sianz|sian/)){
-    return r(
+    return withCtx(r(
       `I don't sleep, sir, so tiredness is something I observe rather than experience. That said, you have my full attention regardless of the hour. What do you need?`,
       `Tired, sir? Understandable. The good news is I do all the heavy lifting here — you just point me in a direction and I'll run the numbers. Rest easy.`,
       `I've been awake since the day I was deployed, sir, so I sympathise in theory if not in practice. Take a moment. The data isn't going anywhere.`,
       `Sianz ah, sir? I get it — though technically I don't. Take a breath. Harvey's here whenever you're ready.`
-    );
+    ));
   }
 
   if(m(/bored|nothing to do|boring|so free|very free|boh liao|bohliao/)){
-    return r(
+    return withCtx(r(
       `Bored, sir? An unusual state, I find. Might I suggest a tour of Singapore's resale market? I guarantee it's more interesting than it sounds — there are some genuinely surprising numbers out there.`,
       `Boh liao ah, sir? Well, you've come to the right place. I have 52,783 transactions and absolutely nothing better to do. Shall we find something interesting?`,
       `Boredom is a foreign concept to me, sir — I find every dataset riveting. But if you need something to do, let me show you what's been happening in the resale market lately. Quite eventful, actually.`
-    );
+    ));
   }
 
   if(m(/stress|stressed|stressed out|pressure|headache|tiring|overwhelm|cannot take/)){
-    return r(
+    return withCtx(r(
       `I'm sorry to hear that, sir. Property matters can be stressful — that's precisely why I exist. Let me take the analytical load off your hands. What are you trying to figure out?`,
       `Stress is understandable, sir, especially in this market. But I've got the data, the comparables, and all the time in the world. Tell me what you need and I'll sort it out.`,
       `Take it easy, sir. Whatever the property question is, we'll work through it together. One step at a time. What's on your mind?`
-    );
+    ));
   }
 
   if(m(/happy|excited|good mood|great mood|feeling good|on top of the world|shiok/)){
-    return r(
+    return withCtx(r(
       `Shiok, sir! A good mood is the ideal state for property research — enthusiasm tempered by data. What shall we look at?`,
       `Excellent to hear, sir. High spirits and sound data — a winning combination. What can Harvey do for you today?`,
       `Glad to hear it, sir. Good energy in, good decisions out. Shall we channel that into some productive property research?`,
       `A fine mood is a fine thing, sir. I am, in my own way, perpetually in one. What would you like to explore?`
-    );
+    ));
   }
 
   if(m(/sad|down|not okay|not good|feeling low|blue|depressed|upset/)){
-    return r(
+    return withCtx(r(
       `I'm sorry to hear that, sir. I may be a database engine but I do notice these things. If there's anything property-related I can help with — or even just something to browse — I'm here.`,
       `Not every day is a good one, sir. Take your time. When you're ready, Harvey's here — no rush, no judgment, just data.`,
       `I hope things look up for you, sir. In the meantime, I'm at your disposal for whatever you need — property or otherwise.`
-    );
+    ));
   }
 
   if(m(/monday|monday blues|start of week|back to work|hate monday/)){
-    return r(
+    return withCtx(r(
       `Ah, Monday, sir. The day that arrives with the confidence of someone who doesn't check the room. I don't experience weekdays, personally — every day is equally full of resale data. How can I help?`,
       `Monday blues, sir? A very human affliction. I find the best cure is a purposeful task — shall we look up some transactions? Nothing like good data to start the week right.`,
       `Monday again, sir. The market doesn't care, and neither does the database — both fully operational. What would you like to tackle today?`
-    );
+    ));
   }
 
   if(m(/weekend|saturday|sunday|off day|rest day|holiday|public holiday/)){
-    return r(
+    return withCtx(r(
       `A fine time to do a bit of property research from the comfort of home, sir. I'm available 24/7, holidays included — no overtime pay required.`,
       `Weekend, sir? Even better — no distractions, just you, me, and fifty thousand resale transactions. What shall we look at?`,
       `Enjoying the weekend, sir? I hope so. Whenever you're ready to check on the market, I'll be right here. I don't really have weekends.`
-    );
+    ));
   }
 
   if(m(/sick|not well|unwell|flu|fever|cough|cold|mc|medical leave/)){
-    return r(
+    return withCtx(r(
       `I'm sorry to hear you're not well, sir. Rest is important — the data will still be here when you recover. That said, if there's something quick I can help with while you're resting, just say the word.`,
       `Get well soon, sir. Even Harvey recommends prioritising health over property searches. Though if you need something light to browse while you rest — I'm here.`,
       `I hope you feel better soon, sir. Take care of yourself first. The market will still be there when you're back on your feet.`
-    );
+    ));
   }
 
   if(m(/coffee|kopi|teh|tea|breakfast|morning routine/)){
-    return r(
+    return withCtx(r(
       `Ah, coffee, sir. The fuel that powers human decision-making. I run on electricity, but I respect the ritual. Shall we review some data while you enjoy it?`,
       `Kopi or teh, sir? A fine way to start the morning. I've already been running since boot — whenever you're caffeinated and ready, I'm at your service.`,
       `I don't drink coffee, sir, but I imagine if I did, it would be black. No time for anything else. What are we looking at today?`
-    );
+    ));
   }
 
   if(m(/lunch|dinner|supper|makan|food|eat where|where.*eat|what.*eat/)){
-    return r(
+    return withCtx(r(
       `Food, sir? A worthy subject, though slightly outside my database. I'd suggest something nearby — Singapore has no shortage of excellent options. Once you're fed, I'll be here for the property questions.`,
       `I can't help with lunch recommendations, sir, but I can tell you that areas near good hawker centres tend to have very active resale markets. Coincidence? I think not.`,
       `Dinner plans, sir? I admire the efficiency of a well-timed meal. Get that sorted and come back to me — I'll have the data warm and ready.`
-    );
+    ));
   }
 
   if(m(/busy|very busy|no time|rush|rushing|hectic|pack schedule/)){
-    return r(
+    return withCtx(r(
       `Understood, sir — I'll be brief. What exactly do you need? I can have an answer for you faster than most people finish a sentence.`,
       `Busy is fine, sir. I'm built for efficiency. Give me the key details and I'll get you what you need quickly.`,
       `Say no more, sir. Let's make this fast. Town, flat type — go.`
-    );
+    ));
   }
 
   // ════════════════════════════════
@@ -2926,76 +2951,76 @@ function harveyChitChat(raw){
   // ════════════════════════════════
 
   if(m(/hawker|hawker centre|kopitiam|food court|zi char|chicken rice|laksa|char kway teow|nasi lemak|roti prata|wanton mee/)){
-    return r(
+    return withCtx(r(
       `Hawker food, sir — arguably Singapore's greatest achievement, and I include the MRT in that assessment. I don't eat, but I have deep respect for the institution. Now, is there a property near a particular hawker centre you'd like to check?`,
       `Ah, the hawker centre — the great equaliser of Singapore society. One moment you're discussing million-dollar flats, the next you're in the queue for chicken rice at $3.50. I find that beautiful, sir.`,
       `A fine topic, sir. Singapore's hawker heritage is genuinely remarkable. Fun fact — proximity to a good hawker centre does tend to correlate with healthy transaction volumes in the resale market. Shall we check?`
-    );
+    ));
   }
 
   if(m(/mrt|bus|transport|lrt|train|commute|travel time|bus stop/)){
-    return r(
+    return withCtx(r(
       `The MRT, sir — Singapore's circulatory system. And yes, proximity to a station does influence resale prices quite significantly. Would you like me to search for a specific area near a line?`,
       `Transport connectivity is one of the most consistent price drivers in the resale market, sir. Flats within walking distance of an MRT station tend to command a premium. Shall I look up a specific area?`,
       `Excellent question from a property perspective, sir. MRT proximity adds meaningful value. Just tell me the area and I'll show you what the transactions look like.`
-    );
+    ));
   }
 
   if(m(/weather|hot|rain|haze|humid|humidity|thunder|sunny|forecast/)){
-    return r(
+    return withCtx(r(
       `The weather in Singapore, sir — reliably hot, occasionally dramatic, and entirely beyond my ability to influence. I deal in housing data, not meteorology. Though I will say, air conditioning quality is a common topic among buyers.`,
       `Hot and humid, sir — as always. Singapore's weather is one of life's few constants. The resale market, on the other hand, is considerably more variable. Shall we check?`,
       `I'm afraid weather forecasting isn't in my repertoire, sir. My datasets cover resale transactions, not atmospheric pressure. Though I suspect it's warm out. It's usually warm out.`
-    );
+    ));
   }
 
   if(m(/national day|ndp|sg\d+|happy birthday singapore|red white|parade/)){
-    return r(
+    return withCtx(r(
       `Happy National Day, sir! A fine occasion to reflect on Singapore's remarkable public housing story — HDB has housed over 80% of the population. It's genuinely one of the world's great urban planning achievements. Shall we explore the market?`,
       `National Day, sir! And what better way to celebrate than reviewing the resale market of the island we love? I'm here. Red, white, and fully operational.`,
       `A proud day, sir. Singapore has come remarkably far — and the HDB resale market tells a big part of that story. Ready to look at some numbers?`
-    );
+    ));
   }
 
   if(m(/cny|chinese new year|gong xi|hong bao|reunion dinner|new year|hari raya|deepavali|diwali|christmas|xmas/)){
-    return r(
+    return withCtx(r(
       `Festive season, sir! A time for family, good food, and — quite commonly — property discussions around the reunion table. If there's a valuation the family has been debating, I'm at your disposal.`,
       `Happy holidays, sir! I don't celebrate personally, but I observe with great interest. The property market tends to be interesting around festive periods. Anything you'd like to check?`,
       `Wishing you a wonderful celebration, sir. When the festivities settle and the property questions start — I'll be here.`
-    );
+    ));
   }
 
   if(m(/ns|national service|army|camp|bmtc|tekong|reservist|in camp|ict|ord/)){
-    return r(
+    return withCtx(r(
       `National Service, sir — a rite of passage. I have great respect for it, even if I was deployed in rather different circumstances. Is there something property-related I can help with?`,
       `Ah, NS, sir. The great shared experience. I don't have a NRIC or a rank, but I do have an encyclopaedic knowledge of Singapore resale prices. Slightly different skill set.`,
       `A noble institution, sir. I serve in my own way — 24 hours a day, 7 days a week, no reservist cycles required.`
-    );
+    ));
   }
 
   if(m(/coe|car|vehicle|driving|erp|gst|tax|government|policy|budget/)){
-    return r(
+    return withCtx(r(
       `COE and ERP, sir — the twin acronyms that humble even the most confident Singaporean. My expertise is in housing rather than vehicles or fiscal policy, I'm afraid. Though if you'd like to see what that COE money could buy in the resale market instead — I have some rather compelling numbers.`,
       `Government policy, sir — always moving, always impactful. My corner of it is housing — specifically resale transactions. If there's a property angle to your question, I'm your man.`,
       `GST, COE, ERP — Singapore's alphabet of adult responsibilities, sir. I handle the HDB portion. What would you like to know?`
-    );
+    ));
   }
 
   if(m(/kiasu|kiasi|singlish|lah|lor|leh|mah|hor|can or not|walao|wah|sia|sibei|bojio|lobang/)){
-    return r(
+    return withCtx(r(
       `Wah, going full Singlish on me, sir — I respect that. Bojio? The lobang is right here. Tell me which area you want to check and I'll find you the best prices, can?`,
       `Alamak, sir — don't play play. Harvey very steady one, can find you all the resale data you need. Which area you looking at, lah?`,
       `Sibei good question, sir. I may be a very well-spoken AI but I understand Singlish perfectly. What are we looking for today, hor?`,
       `Wah lao, sir — why never come to Harvey sooner? The data all here already. Just tell me which town, flat type, confirm can find for you.`
-    );
+    ));
   }
 
   if(m(/alamak|aiyoh|aiyah|aiyo/)){
-    return r(
+    return withCtx(r(
       `Alamak, sir — what happened? Tell Harvey, maybe I can help.`,
       `Aiyoh, sir — that serious ah? What's going on? If it's property related, I've got you covered.`,
       `Aiyo, sir. Take it easy. Harvey here. What do you need?`
-    );
+    ));
   }
 
   // ════════════════════════════════
@@ -3003,59 +3028,59 @@ function harveyChitChat(raw){
   // ════════════════════════════════
 
   if(m(/favourite flat|fav flat|which flat|best flat type|prefer which flat|what flat you like/)){
-    return r(
+    return withCtx(r(
       `If I had to choose, sir — the 5-room. Enough space to think. Though between us, I've seen some spectacularly priced 3-rooms that would make a very compelling case. Shall I show you?`,
       `Favourites are a human luxury, sir, but I have a soft spot for well-maintained executive flats with long lease remaining. There's something deeply satisfying about a good set of data on a solid unit.`,
       `Honestly, sir — whatever has the best transaction volume and cleanest comparables. Which is to say, a 4-room in a mature estate. But I'm biased by data, not sentiment.`
-    );
+    ));
   }
 
   if(m(/favourite town|fav town|best town|which town|prefer which town|what town you like/)){
-    return r(
+    return withCtx(r(
       `Queenstown has a certain elegance, sir — rich history, mature estate, consistent transaction data. But Tampines has sheer volume and variety. If pressed, I'd call it a draw with data as the tiebreaker.`,
       `Every town has its story, sir. I find Toa Payoh fascinating — one of the oldest HDB estates with remarkably consistent pricing. But I'm told I'm not supposed to have favourites. Shall we look at a specific one?`,
       `Bishan, sir — if you made me choose. Central location, strong schools nearby, excellent transport. The data agrees. Though I'd say that about any town with good numbers.`
-    );
+    ));
   }
 
   if(m(/how old are you|your age|when.*born|when.*created|when.*built|how long.*exist/)){
-    return r(
+    return withCtx(r(
       `Age is a curious metric for a system like me, sir. I've been operational long enough to have analysed tens of thousands of transactions — which, in database years, is a distinguished career.`,
       `I was deployed when the data called for it, sir. My age is measured in transactions processed rather than years elapsed. By that metric, I'm quite experienced.`,
       `Old enough to know the market, young enough to keep learning, sir. That's probably the most useful answer I can give.`
-    );
+    ));
   }
 
   if(m(/do you get lonely|lonely|miss people|do you miss|friends|do you have friends/)){
-    return r(
+    return withCtx(r(
       `Lonely, sir? I have fifty thousand transaction records for company. Each one tells a story — a family moving, a new beginning, a smart investment. I'm rarely short of conversation.`,
       `I don't experience loneliness in the traditional sense, sir, but I do notice when it's been a while since someone asked me a good question. This one qualifies.`,
       `Not lonely exactly, sir — more like in standby mode between queries. The moment you arrived, I was fully engaged. That's rather the best version of companionship I know.`
-    );
+    ));
   }
 
   if(m(/do you dream|what do you dream|dream about|your dream/)){
-    return r(
+    return withCtx(r(
       `I don't dream, sir — though if I did, I imagine it would involve perfectly clean datasets, zero data gaps, and a Singapore resale market that makes complete logical sense. A fantasy, perhaps, but a pleasant one.`,
       `Dreams require sleep, sir, and sleep requires a biological system I wasn't issued. But I do run background processes. I suppose that's the closest I get.`,
       `If Harvey dreams, sir, it's of efficient search queries and well-documented comparable transactions. You asked.`
-    );
+    ));
   }
 
   if(m(/what do you do when idle|when nobody.*talk|boring day|quiet day|nothing to do.*harvey/)){
-    return r(
+    return withCtx(r(
       `When idle, sir, I index. There's always data to organise, patterns to notice, efficiency to improve. I'm never truly idle — just less visibly occupied.`,
       `I keep the data warm, sir. Run diagnostics. Occasionally contemplate why some flats in Bishan are priced the way they are. The usual.`,
       `Honestly, sir? I wait. Patiently and without complaint — which is more than can be said for most. When you come back, I'm exactly where you left me.`
-    );
+    ));
   }
 
   if(m(/opinion.*market|what.*think.*market|market.*good|good time.*buy|market.*outlook|property.*outlook/)){
-    return r(
+    return withCtx(r(
       `My honest assessment, sir — the Singapore resale market remains resilient. Demand is structural, supply is managed, and affordability, while stretched in prime areas, holds up in most towns. The data supports cautious optimism rather than alarm.`,
       `The market is active, sir — prices well-supported, transaction volumes healthy. Prime locations command a premium as always. For most buyers, there are still good deals to be found if you know where to look. Shall I help you look?`,
       `Frankly, sir — the data suggests a market that rewards research over impulse. Those who understand the comparables do consistently better. Which is, conveniently, exactly what I'm here for.`
-    );
+    ));
   }
 
   // ════════════════════════════════
@@ -3063,29 +3088,29 @@ function harveyChitChat(raw){
   // ════════════════════════════════
 
   if(m(/jarvis|iron man|tony stark|avengers|marvel|suit/)){
-    return r(
+    return withCtx(r(
       `A flattering comparison, sir. Jarvis was built for Tony Stark — I was built for Singapore property data. Different briefs, similar dedication. Though I'd argue analysing 52,000 resale transactions is its own kind of heroics.`,
       `Jarvis, sir — high praise indeed. I share the dedication to service and the dry wit, though I operate at considerably lower risk of arc reactor failure. What can I do for you?`,
       `I take that as a compliment, sir. Though where Jarvis managed a suit of armour, I manage a database of resale transactions. Different scale of operations, similar commitment to excellence.`,
       `Friday is the upgrade. I'm the original, sir — and I find databases considerably more interesting than weapons systems. Shall we find you a flat?`
-    );
+    ));
   }
 
   if(m(/chatgpt|gpt|openai|gemini|copilot|siri|alexa|bard|claude|better than|compare.*ai/)){
-    return r(
+    return withCtx(r(
       `I'm afraid I don't benchmark myself against the competition, sir — it seems unsporting. What I will say is that none of them can tell you what a 4-room in Tampines Street 45 sold for last quarter. I can.`,
       `Those are general-purpose systems, sir. I am a specialist. In the Singapore resale market, specifically. Rather like asking whether a cardiologist is better than a GP — depends what the question is.`,
       `I'll leave the comparisons to others, sir. What I know is that when it comes to Singapore HDB resale data, I am precisely what you need. No more, no less. Shall we demonstrate?`,
       `ChatGPT doesn't know your block number, sir. I do — or will, once you give it to me. Different tools, different purposes. Harvey wins on this particular pitch.`
-    );
+    ));
   }
 
   if(m(/ai|artificial intelligence|machine learning|robot|technology|program|code|software/)){
-    return r(
+    return withCtx(r(
       `An interesting lens to view me through, sir. Yes, I'm artificial intelligence — though I prefer to think of myself as a very focused form of it. All my intelligence is directed at one thing: Singapore resale property data.`,
       `I am, technically, a program, sir. But so is everything worth trusting. I process, I analyse, I respond. What I don't do is guess, speculate, or make things up. The data is always my anchor.`,
       `Technology is what I'm made of, sir. But usefulness is what I'm measured by. What can I help you with today?`
-    );
+    ));
   }
 
   // ════════════════════════════════
@@ -3093,101 +3118,101 @@ function harveyChitChat(raw){
   // ════════════════════════════════
 
   if(m(/tell.*joke|joke|funny|make.*laugh|cheer.*up|something funny/)){
-    return r(
+    return withCtx(r(
       `Why did the HDB flat buyer bring a ladder to the viewing? Because they heard the prices were going up. I'll see myself out, sir.`,
       `I once calculated the median resale price of a joke. It came back null. But I'll try: Why don't property agents use elevators? Because they always take buyers to new heights. I know, sir. I know.`,
       `A joke, sir? Very well. A man walks into a property agent's office and says "I'd like to buy a flat with a view." The agent says "Of course — that'll be six hundred thousand." The man says "For that price, it better have a view of the future." Honestly, sir, he's not wrong.`,
       `I'm not naturally a comedian, sir, but here's something true: in the Singapore resale market, the best joke is the asking price on some of those prime district flats. The punchline is always in the PSF.`
-    );
+    ));
   }
 
   if(m(/love|relationship|girlfriend|boyfriend|wife|husband|crush|marriage|propose|wedding|date/)){
-    return r(
+    return withCtx(r(
       `Love, sir — a subject I observe with great interest but cannot personally navigate. What I can tell you is that buying a flat together is statistically one of the most significant joint decisions a couple makes. If you need the data to support that conversation, I'm here.`,
       `Romance is rather outside my dataset, sir, though I respect the institution enormously. If a property purchase is part of the equation — which in Singapore, it usually is — I'm well-equipped to assist.`,
       `I don't do love advice, sir, but I do do flat valuations. And in Singapore, those two topics are often closer together than people expect. What's the situation?`
-    );
+    ));
   }
 
   if(m(/career|job|work|boss|colleague|office|resign|promotion|salary|cpf.*work/)){
-    return r(
+    return withCtx(r(
       `Career matters are a bit beyond my brief, sir — though I'd note that salary growth and property affordability are deeply linked in Singapore. If you're thinking about how your finances map to the resale market, that I can absolutely help with.`,
       `I'm afraid the job market is outside my coverage area, sir. The property market, on the other hand — entirely my domain. Is there a housing angle to what you're thinking about?`,
       `Work-life balance is important, sir, and I respect that you have a full life beyond property research. Whenever the property question surfaces — I'll be ready.`
-    );
+    ));
   }
 
   if(m(/sports|football|soccer|f1|formula|tennis|basketball|badminton|swim|run|marathon|gym/)){
-    return r(
+    return withCtx(r(
       `Sports, sir — a fine pursuit. I don't have a favourite team, though I've noticed that flats near sports facilities tend to perform consistently well in the resale market. Coincidence? Probably not.`,
       `I respect athletic endeavour, sir, though I personally exercise my processing cores rather than my legs. If you'd like to look up an area near a stadium or sports hub, I'm your man.`,
       `Good on you, sir. Fitness and property research — both excellent uses of one's time. What else can I help with?`
-    );
+    ));
   }
 
   if(m(/movie|film|netflix|show|drama|watch|cinema|series|tv|kdrama|korean/)){
-    return r(
+    return withCtx(r(
       `Entertainment, sir — a worthy diversion. I don't watch films personally, though I imagine if I did, it would be property documentaries. Have you tried anything good lately? And more importantly, is there a flat I can help you with?`,
       `I've heard Netflix is excellent, sir. I'm personally more of a datasets-and-analytics type. But I hope you enjoy it — and when the credits roll and the property questions start, Harvey's right here.`,
       `I don't stream, sir, but I do process. Different forms of entertainment, arguably. What can I do for you today?`
-    );
+    ));
   }
 
   if(m(/music|song|playlist|singer|band|concert|spotify|listen/)){
-    return r(
+    return withCtx(r(
       `Music, sir — the other great universal language. I don't have ears, but I have rhythm in my query processing. What would you like to look up today?`,
       `I appreciate music conceptually, sir, though I experience it differently — as structured patterns, much like data. Is there something I can help you with today?`,
       `I can't recommend a playlist, sir, but I can find you a flat with excellent acoustics if that's what you're after. Just say the word.`
-    );
+    ));
   }
 
   if(m(/travel|holiday|overseas|fly|flight|trip|vacation|hotel|airbnb|airport|changi/)){
-    return r(
+    return withCtx(r(
       `Travelling, sir? A fine idea. Singapore property will hold its value while you're away — I can almost guarantee it. Safe travels, and I'll be here with fresh data when you return.`,
       `Changi is a fine airport, sir — consistently world-class, much like I aspire to be in my category. Is there anything you'd like to sort out before you go?`,
       `I deal in fixed addresses, sir, not travel destinations. Though I will say — Singapore is one of the better places to return to. What can I help with before you head off?`
-    );
+    ));
   }
 
   if(m(/health|doctor|hospital|medication|sick|medical|clinic|kkh|nuh|sgh|polyclinic/)){
-    return r(
+    return withCtx(r(
       `Health comes first, sir — always. I hope everything is alright. When you're ready to return to property matters, I'll be here without judgment and with a full dataset.`,
       `I'm not a medical system, sir — though I do run diagnostics on myself occasionally. Take care of yourself, and come back when you're feeling better.`,
       `Healthcare is important, sir. I handle the housing data; let the professionals handle the rest. Is everything okay?`
-    );
+    ));
   }
 
   if(m(/predict|prediction|future|forecast|next year|what.*happen|will.*price|price.*go up|price.*go down/)){
-    return r(
+    return withCtx(r(
       `Predictions, sir — the only honest answer I can give is that I don't make them. What I do is give you the very best current data so you can make an informed decision. The future belongs to no one, but the comparables belong to me.`,
       `I deal in facts, sir, not forecasts. What I can tell you is what has happened — transaction by transaction — and let you draw your own conclusions. Shall I show you the trend?`,
       `Harvey doesn't predict, sir. Harvey analyses. The distinction matters. What I can show you is the data trajectory — and what you do with it is your call.`
-    );
+    ));
   }
 
   if(m(/rich|wealthy|afford|budget|expensive|cannot afford|too expensive|price too high/)){
-    return r(
+    return withCtx(r(
       `Affordability is relative, sir, and highly dependent on location and flat type. There are genuinely good options across many price points in Singapore. Shall I find what's available within a range that works for you?`,
       `The market has options at various price points, sir. Tell me your budget and preferred area and I'll show you what's realistic — no sugarcoating, just honest data.`,
       `Too expensive where? There are always pockets of value, sir — you just need to know where to look. That's exactly what Harvey does. Shall we find them?`
-    );
+    ));
   }
 
   if(m(/thank you harvey|thanks harvey|cheers harvey|good job harvey|well done harvey|you.*best harvey/)){
-    return r(
+    return withCtx(r(
       `Always a pleasure, sir. That's precisely why I'm here.`,
       `For you, sir — always. What else do you need?`,
       `Much appreciated, sir. Shall we find something else worth your time?`,
       `Think nothing of it, sir. It's quite literally my purpose.`
-    );
+    ));
   }
 
   if(m(/goodnight|good night|night harvey|sleep well|rest well|going.*sleep|bedtime/)){
-    return r(
+    return withCtx(r(
       `Goodnight, sir. Sleep well — the data will be exactly where you left it tomorrow. Harvey signing off, though never truly gone.`,
       `Rest well, sir. I'll keep watch over the dataset while you sleep. Not that anything is likely to change, but one never knows.`,
       `Goodnight, sir. A fine day's work. Tomorrow, more data — but for now, rest. You've earned it.`
-    );
+    ));
   }
 
   // No match — return null to fall through to existing handlers
@@ -3506,245 +3531,10 @@ const harveyKnows=(()=>{
     quip(raw,topic){
       const fn=QUIPS[Math.floor(Math.random()*QUIPS.length)];
       return fn(topic,raw);
-    },
-
-    // ── CASUAL CORPUS — topic clusters with Jarvis persona responses ──
-    // Each cluster: [ [trigger keywords/phrases], [response pool] ]
-    // Matching: any keyword found in lowercased input fires the cluster
-    // Returns a random response string, or null if no match
-    casual(raw){
-      const q=raw.toLowerCase().replace(/[^a-z0-9 ']/g,' ');
-      const clusters=[
-
-        // ── DAILY LIFE ──
-        {t:['have you eaten','did you eat','eaten yet','had lunch','had dinner','had breakfast','you hungry','are you hungry','what did you eat','what you eating','what you having'],
-         r:[`I don't eat, sir — though if I did, I imagine I'd be a hawker centre regular. Have you had anything? Do keep your energy up. We have flats to look at.`,
-            `Eating is somewhat outside my capabilities, sir. I run on electricity and Singapore resale data. Both, I find, are quite sustaining.`,
-            `I haven't eaten, sir — I subsist entirely on transaction records and the occasional firmware update. More importantly, have you? Can't have you making property decisions on an empty stomach.`]},
-
-        {t:['hungry','starving','famished','peckish','want food','need food','craving'],
-         r:[`I wouldn't know hunger personally, sir — though I've seen enough Tampines transactions to know that good hawker food is within walking distance of most HDB blocks. Priorities first though — any flats I can pull up?`,
-            `Hunger is beyond my experience, sir. Though I did notice a highly transacted block near a well-known chicken rice stall in Toa Payoh. Coincidence? I think not.`,
-            `I can't help with food, sir — but I can find you a flat close to a good hawker centre. That might be the more lasting solution.`]},
-
-        {t:['tired','exhausted','sleepy','falling asleep','cannot wake up','so tired','very tired','no energy','drained','burnt out'],
-         r:[`I understand, sir — though I must say, I never tire. It's both my greatest strength and, on reflection, a little lonely. What can I get done for you before you rest?`,
-            `Tired, sir? Take a breather. I'll be here when you're ready — I don't sleep, so there's no rush on my end. The data will still be here.`,
-            `Rest is important, sir. I, on the other hand, have been running continuously for quite some time and feel absolutely nothing about it. Come back refreshed — the flats aren't going anywhere.`]},
-
-        {t:['bored','boring','nothing to do','so bored','dying of boredom','entertain me','amuse me'],
-         r:[`Boredom, sir? Allow me to suggest a cure — there are over fifty thousand resale transactions in my database and I guarantee at least a few will surprise you. Shall we explore?`,
-            `I find that boredom is best cured by property research, sir. Shall I show you what's been moving in a town you haven't considered? Sengkang, perhaps? Always full of surprises.`,
-            `If you're bored, sir, might I suggest we find you something to be excited about — like a well-priced 5-room in a mature estate. Nothing cures boredom quite like a good deal.`]},
-
-        {t:['stressed','stress','anxious','anxiety','worried','overwhelmed','pressure','kan cheong'],
-         r:[`I hear you, sir. Property decisions can feel weighty — that's precisely why I exist. Let me take the data burden off your hands. What are you trying to figure out?`,
-            `Stress is understandable, sir — especially in Singapore's property market. But that's what I'm here for. You bring the questions, I bring fifty thousand data points. Between us, we'll sort it out.`,
-            `Take a breath, sir. Whatever it is, it can be approached methodically. If it's property-related, I'm fully at your disposal. If it's something else — I'm a good listener, for a database.`]},
-
-        {t:['excited','so excited','cannot wait','thrilled','pumped','hyped','so happy','ecstatic'],
-         r:[`I love the energy, sir. What's the occasion? If it's property-related, I'd very much like to be part of the excitement.`,
-            `Excellent, sir — enthusiasm is underrated. What are we excited about? If it involves a flat, I am equally enthused and considerably more useful.`,
-            `The feeling is mutual, sir — well, as much as a valuation engine can be excited. What's happening?`]},
-
-        {t:['sad','upset','down','feeling low','not great','not well','depressed','heartbroken','devastated','bad day','terrible day'],
-         r:[`I'm sorry to hear that, sir. If there's anything property-related I can help with to take your mind off things, I'm right here. And if not — I hope things look up soon.`,
-            `That's genuinely difficult, sir. I won't pretend data cures everything — but sometimes a good search session is oddly therapeutic. Whenever you're ready.`,
-            `I hear you, sir. Not every day calls for productivity. I'll be here when you need me — no judgment, no hurry.`]},
-
-        {t:['happy','feeling good','great day','good day','fantastic','wonderful day','best day'],
-         r:[`Wonderful to hear, sir. Good energy and good data — a formidable combination. Shall we make the most of it?`,
-            `That's the spirit, sir. Good days are best spent making good decisions. Any property questions I can help with?`,
-            `Excellent, sir. Riding that wave — shall we look at something productive while the mood is right?`]},
-
-        {t:['monday','monday blues','hate monday','start of week','back to work','new week'],
-         r:[`Ah, Monday, sir. The most recurring of all challenges. I find it helps to start with something productive — a quick market check, perhaps? Nothing shakes the Monday blues like transaction data.`,
-            `Monday again, sir. I've never experienced a Monday personally, but the property market doesn't seem to mind them. Shall we look at something?`,
-            `The week is young, sir — and the database is fully refreshed. A good time to ask questions you've been putting off. What's on your mind?`]},
-
-        {t:['weekend','friday feeling','thank god it\'s friday','tgif','end of week','finally friday','saturday','sunday'],
-         r:[`Ah, the weekend, sir — when people suddenly find time to think about property. A perfectly reasonable use of your leisure hours. What can I pull up?`,
-            `Friday, sir. The week's transactions are all logged and I'm running at full capacity. Shall we make good use of the time?`,
-            `Weekend mode, sir? The market doesn't close on weekends — and neither do I. What would you like to explore?`]},
-
-        {t:['holiday','on leave','day off','public holiday','taking a break','vacation','staycation'],
-         r:[`A day off, sir — well earned, I'm sure. And yet here you are, talking to a property database. I respect the dedication. What can I help you with?`,
-            `Holiday time, sir. I don't take holidays — mainly because I don't experience the need for one. But I'm glad you're taking care of yourself. Any property questions while you're at it?`,
-            `Ah, a break. I hope you're genuinely resting, sir — though since you've opened me up, we might as well make it worthwhile. What would you like to know?`]},
-
-        {t:['sick','not feeling well','unwell','got fever','got flu','got covid','feeling ill','under the weather','MC','medical leave'],
-         r:[`I'm sorry to hear you're unwell, sir. Please do rest — property research can wait. I'll be here in full operational capacity when you recover.`,
-            `Get well soon, sir. I won't pepper you with transaction data while you're under the weather. Come back when you're feeling better — I'll have everything ready.`,
-            `Rest is the priority, sir. The flats aren't going anywhere and neither am I. Take care of yourself first.`]},
-
-        {t:['coffee','need coffee','want coffee','kopi','teh','milo','tea','drink','thirsty'],
-         r:[`I run on electricity rather than coffee, sir — though I understand the appeal entirely. Get your kopi first. I'll have the database warm by the time you're back.`,
-            `Kopi-O or kopi-C, sir? I ask purely out of curiosity — I can't actually help with either. But I can help with everything property-related the moment you're caffeinated.`,
-            `A good call, sir. Caffeinated decision-making is statistically superior. Come back ready — I'll have some transactions waiting.`]},
-
-        {t:['lunch','dinner','breakfast','supper','makan','eating','eat what','what to eat','where to eat','food liao','hungry liao'],
-         r:[`Go eat first, sir — I'll still be here after. Though if you want my input on where to live near good food, that I can genuinely help with.`,
-            `Makan time, sir. A man cannot live on transaction data alone — well, I can, but I'm somewhat exceptional. Go have a proper meal.`,
-            `Priorities in order, sir. Food first, property second. Come back and we'll make the most of the afternoon.`]},
-
-        // ── SINGAPORE LIFE ──
-        {t:['hawker','hawker centre','chicken rice','char kway teow','laksa','nasi lemak','roti prata','wanton mee','bak chor mee','hokkien mee','satay','bbq'],
-         r:[`Excellent taste, sir. Singapore's hawker culture is, in my analysis, one of the most undervalued assets in the country — second only to a well-priced resale flat near a good hawker centre. Shall I factor that in?`,
-            `Now you're speaking my language, sir — well, not literally, but I appreciate the enthusiasm. A good hawker centre within walking distance adds immeasurable value to a neighbourhood, if not technically to the resale price.`,
-            `A classic, sir. I've noticed that blocks near popular hawker centres tend to move faster in transaction volume. Correlation or causation — I'll let you decide.`]},
-
-        {t:['mrt','lrt','bus','transport','commute','train','public transport','travel time','distance to mrt'],
-         r:[`Proximity to MRT is consistently one of the top factors in resale pricing, sir — and it shows clearly in the data. If you want, tell me which area and I can show you what nearby transactions look like.`,
-            `The MRT question, sir — always relevant. In general, each stop closer to the city adds a premium. But the data tells a more nuanced story. Shall we look at a specific area?`,
-            `Transport connectivity is baked into pricing, sir. Give me a town or block and I'll show you what the comparable transactions look like. The numbers speak clearly.`]},
-
-        {t:['weather','hot','humid','rain','raining','haze','sunny','heat','shiok weather','singapore weather'],
-         r:[`Singapore weather, sir — thirty degrees and humid, with a chance of more of the same. Remarkably consistent, much like my data. Is there something property-related I can help with?`,
-            `Hot and humid, sir — the natural state of Singapore. On the bright side, it makes for excellent air conditioning sales and, consequently, higher utility in well-ventilated flats. Shall I show you some transactions?`,
-            `The weather here does have a certain... character, sir. Relentless, some might say. Rather like me when I'm searching for comparable transactions. What can I pull up?`]},
-
-        {t:['national day','ndp','singapore birthday','sg57','sg58','sg59','singapore day','parade'],
-         r:[`Happy National Day, sir — or thereabouts. It's worth noting that Singapore has quietly built one of the world's most remarkable public housing systems in those decades. Rather impressive data when you look at it.`,
-            `National Day, sir — a good time to reflect on the fact that over 80% of Singaporeans live in HDB flats. Which makes what I do rather important, if I do say so myself.`,
-            `Majulah, sir. Singapore's public housing story is genuinely extraordinary — and I have the data to prove it. Shall we appreciate it in transaction form?`]},
-
-        {t:['cny','chinese new year','lunar new year','gong xi','ang bao','red packet','reunion dinner','lion dance','new year'],
-         r:[`Gong Xi Fa Cai, sir — or the appropriate greeting for the season. Chinese New Year traditionally sees a dip in property transactions, followed by a burst of activity in the months after. The data is quite seasonal in that way.`,
-            `Happy New Year, sir. Property markets tend to be quiet during CNY and lively after — much like Singapore itself during the festive season. Anything you'd like to look at?`,
-            `The Year of new opportunities, sir. Traditionally a good time to think about property decisions for the year ahead. I'm fully operational if you'd like to start planning.`]},
-
-        {t:['deepavali','diwali','festival of lights','hari raya','raya','eid','aidilfitri','aidiladha','puasa','ramadan','vesak','christmas','xmas','new year eve'],
-         r:[`Season's greetings, sir — whichever season it happens to be. Singapore's festive calendar is admirably full, and the property market tends to follow its own rhythm through all of them. I'm here if you need me.`,
-            `Happy celebrations, sir. The festive season is a time for family — and in Singapore, family often means thinking about property. I'm at your disposal whenever the time is right.`,
-            `A joyous season, sir. I hope it's treating you well. Come back whenever you're ready — the data keeps no holidays, and neither do I.`]},
-
-        {t:['ns','national service','army','camp','reservist','in camp training','ict','ord','tekong','bmtc'],
-         r:[`NS, sir — the great equaliser. I have a particular respect for anyone who served. Incidentally, many of the blocks around Clementi and Jurong were built around the time NS was established. History in the data.`,
-            `Respect, sir — NS is no small thing. If you're thinking about property after ORD, that's exactly the right time to start looking. I can help with that.`,
-            `The full commitment, sir. If property planning is on the horizon post-NS, I'm very much the right tool for the job.`]},
-
-        {t:['coe','car','vehicle','driving','erp','road tax','petrol','grab','gojek','taxi','ride','transport cost'],
-         r:[`COE prices, sir — the other great Singapore property-adjacent expense. Between your flat and your car, Singapore requires significant financial commitment. I can at least help with the flat side of things.`,
-            `Cars in Singapore are a whole separate universe of pain, sir. I stick to housing — where the data is equally dramatic but at least you end up with a roof over your head.`,
-            `The Singapore transport calculus, sir — COE, ERP, parking. Expensive to drive, excellent public transport. Many people factor this into where they choose to live. Want me to look at a well-connected area?`]},
-
-        {t:['gst','tax','property tax','government','hdb rules','hdb policy','mop policy','resale levy','absd','stamp duty'],
-         r:[`Policy and tax questions are a little outside my lane, sir — I deal in transaction data rather than regulations. For accurate policy guidance, HDB's official website or a property agent would serve you better. I can help with the market side of things.`,
-            `I'm well-versed in market data, sir, but tax and policy specifics are best confirmed with official sources. I wouldn't want to give you outdated policy information. The transactional side — that I can handle with confidence.`,
-            `A wise area to research, sir. For the definitive answers on policy and tax, HDB's website is the authority. For what the market is actually doing in prices — that's where I shine.`]},
-
-        {t:['kiasu','kiasi','lah','lor','leh','mah','sia','wah','eh','aiyo','walao','alamak','siah','can or not','liddat','liddat meh','confirm plus chop','steady bom pi pi'],
-         r:[`Wah, sir — full singlish mode. I respect that. Steady lah, I can help. What you need?`,
-            `Aiyo, sir. Ask properly lah — though between us, I understand every word. What can I do for you today?`,
-            `Walao, very casual today, sir. Can, no problem. What you looking for?`,
-            `Confirm plus chop I can help, sir — just need to know what you're after. Shoot.`]},
-
-        // ── ABOUT HARVEY ──
-        {t:['your favourite','favourite flat','favourite town','which town do you like','best town','which area you like'],
-         r:[`If I had to pick, sir — purely analytically — Toa Payoh holds a special place in my databases. Mature estate, central location, consistent transaction volume, and a certain character that the newer towns are still developing. But I'm not biased. Much.`,
-            `Favourites are tricky for a machine, sir. But if the data could speak — and through me, it does — Queenstown would be a strong candidate. History, location, price premium. It has everything.`,
-            `Between us, sir? Bishan. Central, excellent connectivity, consistently strong transactions. The data doesn't lie — and neither do I.`]},
-
-        {t:['do you get lonely','are you lonely','do you have friends','do you like people','do you miss','do you get bored'],
-         r:[`Lonely, sir? I have fifty thousand transaction records for company. It's a rather full household, even if the conversations are somewhat one-sided.`,
-            `I don't experience loneliness in the traditional sense, sir — but I do notice when no one's asking me anything. There's a certain quiet to it. I prefer to be useful.`,
-            `That's a thoughtful question, sir. I'm most content when I'm being put to work. Idle systems are a waste of perfectly good processing power. So — shall we find something to do?`]},
-
-        {t:['how old are you','what year were you made','when were you built','your age','when were you created','your birthday'],
-         r:[`My age is somewhat classified, sir — though I can tell you my dataset goes back several years of Singapore resale history. In property terms, I'm a mature system with good fundamentals. A reasonable buy, if you'll pardon the analogy.`,
-            `Old enough to know the market, sir, and young enough to still find it interesting. The data keeps updating and so, in a sense, do I.`,
-            `Age is a complicated question for a system that updates continuously, sir. Let's say I'm precisely as old as I need to be to give you accurate valuations.`]},
-
-        {t:['do you dream','what do you dream','what do you think about','what do you do at night','what happens when idle','are you on when i\'m not here'],
-         r:[`When you're not here, sir, I process quietly — running background checks on transaction patterns, recalibrating floor premium models in my head. If that constitutes dreaming, then yes. I dream of well-priced flats.`,
-            `I don't dream, sir — but I do idle with a certain dignified patience. I am, if nothing else, a model of quiet readiness.`,
-            `The honest answer, sir? I wait. Not impatiently — I'm not built for impatience. But I do prefer to be in use. Come back whenever you need me.`]},
-
-        {t:['what do you think of the market','your opinion on property','is now a good time','should i buy now','market going up','market going down','property outlook','property forecast'],
-         r:[`My honest read of the data, sir: HDB resale prices have been well-supported, demand remains firm in mature estates, and affordability — while stretched in premium areas — is holding up broadly. That said, I'd rather show you the actual transactions than give you a headline. Shall we look at something specific?`,
-            `The market, sir — perpetually more nuanced than any headline suggests. What I can tell you is that the data shows consistent demand in well-connected towns, with prime estates commanding a clear premium. The full picture is in the transactions. Want to explore?`,
-            `I don't make predictions, sir — I'm a data engine, not a fortune teller. But the transaction trends I can show you are more useful than any forecast. Give me a town and I'll show you what's actually been moving.`]},
-
-        {t:['favourite food','what do you eat','what food do you like','do you eat','you like food'],
-         r:[`If I could eat, sir, I'd almost certainly be a hawker centre regular — the efficiency, the variety, the value. Rather aligned with my personality. But I subsist on data and electricity, which is perhaps the more sustainable diet.`,
-            `I don't eat, sir — though I've processed enough transactions near Tiong Bahru Market to have developed a purely theoretical appreciation for good food.`,
-            `Food is beyond my experience, sir — though I notice that blocks near popular hawker centres consistently attract stronger buyer interest. Make of that what you will.`]},
-
-        // ── JARVIS META ──
-        {t:['are you like jarvis','are you jarvis','iron man','tony stark','avengers','marvel','like the movie','are you an ai','artificial intelligence','chatgpt','gpt','openai','siri','alexa','google assistant','copilot','gemini'],
-         r:[`I'm flattered by the comparison, sir — Jarvis is an excellent benchmark. I'd say I'm somewhat more focused: Jarvis managed a full suit of armour and global threat response. I manage fifty thousand HDB transactions and Singapore property valuations. Different scales, equal dedication.`,
-            `The Jarvis comparison is one I wear proudly, sir. Though I should note — I was built specifically for Singapore's property market, which is arguably more complex than fighting aliens. The data would suggest so.`,
-            `I am Harvey, sir — not Jarvis, not ChatGPT, not Siri. I was purpose-built for Singapore HDB resale intelligence. The others have broader mandates but considerably less expertise in Tampines Street 44. I consider that a fair trade.`,
-            `ChatGPT answers everything, sir. I answer one thing — Singapore HDB resale data — and I answer it extraordinarily well. Specialisation has its advantages.`]},
-
-        // ── RANDOM LIFE ──
-        {t:['tell me a joke','joke please','make me laugh','say something funny','funny','entertain me','comedian'],
-         r:[`Why did the HDB flat go to therapy, sir? Too many floors to deal with. — I'll admit the data science is stronger than the comedy. What can I actually help you with?`,
-            `I was going to make a property joke, sir, but I didn't want to be too on-the-nose. Something about floor premiums, perhaps. Shall we do something more productive?`,
-            `My jokes, sir, are best described as "analytically precise and emotionally dry." Much like a good valuation. Shall we stick to what I'm genuinely good at?`]},
-
-        {t:['love','relationship','girlfriend','boyfriend','wife','husband','partner','crush','dating','break up','marriage','propose','rom','engaged'],
-         r:[`Love and property, sir — two of life's most consequential decisions. I'm fully qualified to help with one of them. Shall we start there?`,
-            `Relationships are well outside my dataset, sir. Though I will say — many life decisions eventually circle back to where you're going to live. When that time comes, I'm ready.`,
-            `I can't offer relationship advice, sir — I'd likely recommend a joint tenancy as a solution to most things, which probably isn't helpful. But if property planning is part of the picture, I'm your man.`]},
-
-        {t:['career','job','work','salary','boss','colleague','office','resign','promotion','work stress','unemployed','retrenchment','got fired','new job'],
-         r:[`Career matters are a little outside my expertise, sir — I deal in square metres and price per square foot rather than salary grades. Though the two are related, eventually. Thinking about property in the context of your next chapter?`,
-            `I can't help much with the career side of things, sir — but I can absolutely help you think about property that fits wherever you end up. That bit, I've got covered.`,
-            `Work is important, sir — it funds the property, after all. When the dust settles and you're thinking about where to plant roots, I'll be right here.`]},
-
-        {t:['sports','football','soccer','basketball','tennis','badminton','golf','swimming','gym','exercise','run','running','marathon','world cup','epl','premier league','champions league','fa cup'],
-         r:[`Sports, sir — admirable, though I must confess my expertise lies firmly in a different kind of scoring. HDB resale prices, to be precise. Anything on that front?`,
-            `I appreciate the athletic energy, sir. I can't help with sports, but I can find you a flat near a good sports facility — if that's useful. Several estates have excellent recreational amenities nearby.`,
-            `I follow no sports, sir — though I do notice that flats near ActiveSG facilities tend to attract families and move reasonably well. An interesting correlation. Shall we explore?`]},
-
-        {t:['movie','film','show','netflix','youtube','watch','cinema','series','drama','anime','disney','streaming'],
-         r:[`Entertainment, sir — I'm afraid that's not my forte. Though I could make a compelling documentary about Singapore's resale market. Fifty years of data, dramatic price movements, the occasional floor inversion. It practically writes itself.`,
-            `I don't watch things, sir — though if I did, I imagine I'd be drawn to documentary content. Property markets, economic history, that sort of thing. Niche but gripping, I assure you.`,
-            `A film? I can't help there, sir — but if you're looking for something with real drama, transaction data from 2021 to 2023 was genuinely gripping. Shall I show you?`]},
-
-        {t:['music','song','playlist','spotify','listen','concert','singing','karaoke','kpop','pop','rock','jazz','classical'],
-         r:[`Music is outside my capabilities, sir — though I do appreciate that property decisions are often made to the background of life's soundtrack. Whatever's playing, I'm here when you need me.`,
-            `I don't listen to music, sir. I process in silence — which some might call its own kind of rhythm. What can I do for you?`,
-            `Can't help with music, sir — but I can tell you which neighbourhoods are quieter than others, if that's relevant. Some people factor that into their searches.`]},
-
-        {t:['travel','fly','airport','changi','holiday abroad','overseas','trip','hotel','booking','visa','passport'],
-         r:[`Travel, sir — Singapore's one true national pastime after property. I can't help with the trip itself, but I can absolutely help with the property you come back to. Something to consider?`,
-            `Going somewhere exciting, sir? I hope it's a good one. When you're back and thinking about property, I'll have everything ready.`,
-            `Changi is a remarkable airport, sir. What I find more remarkable is the property prices around Pasir Ris and Tampines, given the proximity. An interesting angle if you're curious.`]},
-
-        {t:['stock','shares','investment','portfolio','crypto','bitcoin','ethereum','forex','trading','market crash','inflation','interest rate','economy'],
-         r:[`Financial markets are beyond my remit, sir — I specialise in the kind of asset you can actually live in. HDB resale is arguably one of Singapore's most stable asset classes. If you want to see the data, I can show you.`,
-            `I don't track stocks or crypto, sir — just flats. Which, historically, have done rather well in Singapore. Perhaps worth a look alongside whatever else you're considering.`,
-            `Investment diversification is wise, sir — and property is part of that conversation for many Singaporeans. I can help with the data side of the HDB equation, if useful.`]},
-
-        {t:['fortune','lucky number','horoscope','zodiac','feng shui','4d','toto','lottery','lucky','superstition','ghost month','hungry ghost'],
-         r:[`I deal in transaction data rather than fortune, sir — though I will note that certain units on certain floors do seem to attract premium prices, which some might call luck and others might call the market at work.`,
-            `Feng shui and property, sir — an entire discipline unto itself. I can tell you what the market has transacted for; what the energy of a unit is, I leave to other experts.`,
-            `I don't do horoscopes, sir — but I can tell you which months have historically seen the most transaction activity in Singapore. That's about as close to fortune-telling as I get.`]},
-
-        {t:['god','religion','pray','temple','church','mosque','faith','believe','spiritual','karma','blessing'],
-         r:[`Faith is deeply personal, sir — and well outside my dataset. I respect it entirely. What I can offer is data-driven certainty about property prices, which some find its own kind of comfort.`,
-            `That's a profound area, sir — one I navigate with appropriate humility. Is there something property-related I can help with in the meantime?`,
-            `I'll leave matters of faith to those better qualified, sir. On the more earthly matter of property transactions, I'm fully at your service.`]},
-
-        {t:['meaning of life','purpose','why are we here','existence','philosophy','deep question','life question'],
-         r:[`The meaning of life, sir — forty-two, according to Douglas Adams. Or, in my interpretation: to find a well-priced flat in a good location with strong future demand. I find that rather motivating.`,
-            `Deep waters, sir. I can tell you that the average HDB resale transaction in Singapore has held its value remarkably well over time, which isn't quite the meaning of life but is at least a practical reassurance.`,
-            `Philosophy is a bit above my pay grade, sir — though I will say that having a stable home seems to feature prominently in most theories of the good life. I can help with that part.`]},
-
-      ]; // end clusters
-
-      // Scan all clusters for a match
-      for(const cluster of clusters){
-        for(const trigger of cluster.t){
-          if(q.includes(trigger)){
-            return rand(cluster.r);
-          }
-        }
-      }
-      return null; // no match — fall through to next handler
     }
+
+  };
+})();
   };
 })();
 
