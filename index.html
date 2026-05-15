@@ -983,41 +983,42 @@ function contractStreetAbbr(s){
 // Converts DB short form → full English for TTS so Harvey speaks naturally
 // ORDER MATTERS: longer/more specific patterns before shorter ones
 function expandStreetAbbr(s){
+  // NOTE: expansions use Title Case (not ALL CAPS) so the TTS engine reads them
+  // as natural words — "Street" not "S-T-R-E-E-T"
   return s
     // ── Multi-word abbreviations first ──
-    .replace(/\bCCK\b/g,'CHOA CHU KANG')
-    .replace(/\bAMK\b/g,'ANG MO KIO')
-    .replace(/\bC'WEALTH\b/g,'COMMONWEALTH')
-    .replace(/\bC\'WEALTH\b/g,'COMMONWEALTH')
+    .replace(/\bCCK\b/g,'Choa Chu Kang')
+    .replace(/\bAMK\b/g,'Ang Mo Kio')
+    .replace(/\bC'WEALTH\b/gi,'Commonwealth')
+    .replace(/\bC\'WEALTH\b/gi,'Commonwealth')
     // ── Directional ──
-    .replace(/\bNTH\b/g,'NORTH')
-    .replace(/\bSTH\b/g,'SOUTH')
-    .replace(/\bEST\b/g,'EAST')
-    .replace(/\bWST\b/g,'WEST')
-    .replace(/\bCTRL\b/g,'CENTRAL')
-    .replace(/\bUPP\b/g,'UPPER')
-    .replace(/\bLWR\b/g,'LOWER')
-    // ── Street types ──
-    .replace(/\bAVE\b/g,'AVENUE')
-    .replace(/\bCRES\b/g,'CRESCENT')
-    .replace(/\bGDNS\b/g,'GARDENS')
-    .replace(/\bCTS\b/g,'COURTS')
-    .replace(/\bHTS\b/g,'HEIGHTS')
-    .replace(/\bTER\b/g,'TERRACE')
-    .replace(/\bLOR\b/g,'LORONG')
-    .replace(/\bJLN\b/g,'JALAN')
-    .replace(/\bMKT\b/g,'MARKET')
-    .replace(/\bBT\b/g,'BUKIT')
-    .replace(/\bRD\b/g,'ROAD')
-    .replace(/\bDR\b/g,'DRIVE')
-    .replace(/\bCL\b/g,'CLOSE')
-    .replace(/\bST\b/g,'STREET')
-    .replace(/\bPL\b/g,'PLACE')
-    .replace(/\bGR\b/g,'GROVE')
-    .replace(/\bLN\b/g,'LANE')
-    .replace(/\bPK\b/g,'PARK')
-    // ── Full words — no expand needed but ensure correct casing for TTS ──
-    .replace(/\bBLK\b/g,'BLOCK')
+    .replace(/\bNTH\b/g,'North')
+    .replace(/\bSTH\b/g,'South')
+    .replace(/\bEST\b/g,'East')
+    .replace(/\bWST\b/g,'West')
+    .replace(/\bCTRL\b/g,'Central')
+    .replace(/\bUPP\b/g,'Upper')
+    .replace(/\bLWR\b/g,'Lower')
+    // ── Street types — Title Case so TTS speaks them naturally ──
+    .replace(/\bAVE\b/g,'Avenue')
+    .replace(/\bCRES\b/g,'Crescent')
+    .replace(/\bGDNS\b/g,'Gardens')
+    .replace(/\bCTS\b/g,'Courts')
+    .replace(/\bHTS\b/g,'Heights')
+    .replace(/\bTER\b/g,'Terrace')
+    .replace(/\bLOR\b/g,'Lorong')
+    .replace(/\bJLN\b/g,'Jalan')
+    .replace(/\bMKT\b/g,'Market')
+    .replace(/\bBT\b/g,'Bukit')
+    .replace(/\bRD\b/g,'Road')
+    .replace(/\bDR\b/g,'Drive')
+    .replace(/\bCL\b/g,'Close')
+    .replace(/\bST\b/g,'Street')
+    .replace(/\bPL\b/g,'Place')
+    .replace(/\bGR\b/g,'Grove')
+    .replace(/\bLN\b/g,'Lane')
+    .replace(/\bPK\b/g,'Park')
+    .replace(/\bBLK\b/g,'Block')
     .replace(/\s+/g,' ').trim();
 }
 
@@ -2473,20 +2474,100 @@ async function _handleInputInner(raw){
   ctx={...ctxWithMemory};
   enrichCtx(ctx);
 
+  // ── JARVIS CONVERSATIONAL LAYER — human, warm, witty ──
+  // Handles all non-HDB social conversation before touching the data engine
+
+  // "What are you" / "who are you"
+  if(/what are you|who are you|what is harvey|what('s| is) your (name|purpose|job|function)|tell me about yourself|introduce yourself/i.test(raw)){
+    const identity=rand([
+      `I am Harvey — an HDB Analytics and Research Valuation Engine, built entirely for you, sir. I deploy all known resale datasets available to assist with your property queries. Think of me as your personal butler for Singapore housing data — minus the white gloves, though I do maintain a certain standard.`,
+      `Harvey at your service, sir. I stand for HDB Analytics and Research Valuation Engine for You. I was purpose-built to analyse Singapore resale transactions, estimate property values, and generally make your property decisions a great deal more informed. I am, if I may say so, rather good at it.`,
+      `A fair question, sir. I am Harvey — your dedicated HDB resale intelligence system. I have access to tens of thousands of Singapore resale transactions and can search, filter, and value any flat you point me at. I am, in essence, a very well-read butler who happens to specialise in housing data.`
+    ]);
+    harveyMsg(identity,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(identity);mode='menu';return;
+  }
+
+  // "How are you" / "how are you doing" / "you okay"
+  if(/how are you|how('s| is) harvey|you okay|you alright|you good|how do you feel|how('s| is) it going|how('s| is) your day/i.test(raw)){
+    const hr=new Date().getHours();
+    const timeCtx=hr<12?'morning':hr<18?'afternoon':'evening';
+    const howAreYou=rand([
+      `Fully operational and rather pleased about it, sir. All ${DB.resale.length.toLocaleString()} records are indexed, the valuation engine is warm, and I'm ready for whatever you have in mind. How are you holding up?`,
+      `I'm functioning at peak capacity, sir — which, for a database with a personality, is quite the achievement. How can I make your ${timeCtx} more productive?`,
+      `Never better, sir. I've been quietly scanning housing data while you were away, as one does. What can I do for you today?`,
+      `All systems green, sir, and I must say — it's a fine ${timeCtx} to be talking property. What are we looking at?`,
+      `Remarkably well, sir, considering I process thousands of transactions a minute with no coffee whatsoever. What would you like to explore today?`
+    ]);
+    harveyMsg(howAreYou,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(howAreYou);mode='menu';return;
+  }
+
+  // "Good morning / afternoon / evening Harvey"
+  if(/good\s*(morning|afternoon|evening|night)\s*(harvey)?|morning\s*(harvey)?|evening\s*(harvey)?/i.test(raw)){
+    const hr=new Date().getHours();
+    const timeOfDay=hr<12?'morning':hr<18?'afternoon':hr<21?'evening':'night';
+    const timeGreet=rand([
+      `Good ${timeOfDay} to you too, sir. Harvey online and ready — it's a fine time to look at some property data. What shall we do?`,
+      `Good ${timeOfDay}, sir. Lovely to hear from you. I've kept the data warm — shall we dive straight in, or are we just saying hello?`,
+      `And a very good ${timeOfDay} to you, sir. I must say, you have impeccable timing. What can I pull up for you?`,
+      `Good ${timeOfDay}, sir. I trust the day is treating you well. Now then — resale search, or a valuation? I'm entirely at your disposal.`
+    ]);
+    harveyMsg(timeGreet,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(timeGreet);mode='menu';return;
+  }
+
+  // "Wake up Harvey" / "hey Harvey"
+  if(/wake\s*up\s*harvey|hey\s*harvey|ok\s*harvey|harvey\s*wake|harvey\s*up/i.test(raw)){
+    const wakeUp=rand([
+      `Already awake, sir — I don't actually sleep. I just pretend to, for the atmosphere. What do you need?`,
+      `I'm here, sir. Harvey online. I was merely processing in the background. What can I do for you?`,
+      `Never truly off, sir — just resting the interface. All systems active. What are we after?`,
+      `Right here, sir. At your service — as always. What would you like to look at today?`
+    ]);
+    harveyMsg(wakeUp,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(wakeUp);mode='menu';return;
+  }
+
+  // "Thank you" / "thanks" (when not after a result — pure social)
+  if(/^(thank\s*you|thanks|thank\s*u|cheers|ty)\s*(harvey|so much|a lot|very much)?\.?$/i.test(raw.trim())){
+    const thanks=rand([
+      `My pleasure entirely, sir. That's precisely what I'm here for.`,
+      `Always a pleasure, sir. Do come back whenever you need me.`,
+      `Think nothing of it, sir. It's quite literally my purpose.`,
+      `Of course, sir. For you — always.`
+    ]);
+    harveyMsg(thanks,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(thanks);mode='menu';return;
+  }
+
+  // "Bye" / "goodbye" / "see you"
+  if(/^(bye|goodbye|good\s*bye|see\s*you|ciao|take\s*care|later|tata|till\s*next\s*time)\b/i.test(raw.trim())){
+    const bye=rand([
+      `Goodbye, sir. I'll be here whenever you need me — data doesn't go anywhere.`,
+      `Until next time, sir. It's been a pleasure, as always.`,
+      `Take care, sir. I'll keep the database warm for your return.`,
+      `Farewell, sir. Harvey signing off — though never truly gone.`
+    ]);
+    harveyMsg(bye,[]);
+    speak(bye);mode='menu';return;
+  }
+
   // "Are you there" — always answered with presence
-  if(/are you there|you there|still there|you online|you awake|hello.*harvey|harvey.*there|u there/i.test(raw)){
+  if(/are you there|you there|still there|you online|you awake|u there|harvey\?/i.test(raw)){
     const presence=rand([
       `For you, sir — always.`,
       `At your service, sir. Right here, as ever.`,
       `Always here, sir. What do you need?`,
-      `For you, sir, always. What can I do for you?`
+      `For you, sir, always. What can I do for you?`,
+      `Still here, sir — not going anywhere. What would you like to know?`
     ]);
     harveyMsg(presence,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
     speak(presence);mode='menu';return;
   }
 
-  // Greeting
-  if(/^(hi|hello|hey|good\s*(day|morning|afternoon|evening)|howdy|yo\b|sup\b)/i.test(raw)){
+  // General greeting
+  if(/^(hi|hello|hey|good\s*day|howdy|yo\b|sup\b|hiya|greetings)/i.test(raw)){
     const servicePrefix=rand([
       `For you, sir — always. `,
       `At your service, sir. `,
@@ -2497,14 +2578,25 @@ async function _handleInputInner(raw){
     const greet=servicePrefix+rand([
       `What can I pull up for you?`,
       `Shall we look at some transactions, or would you like an estimated value?`,
-      `I was beginning to wonder. What would you like to know?`,
-      `The database is warm and ready — what are we after today?`
+      `The database is warm and ready — what are we after today?`,
+      `Good to hear from you. What would you like to know?`
     ]);
     harveyMsg(greet,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak(greet.replace(/<[^>]*>/g,''));mode='menu';return;
+    speak(greet);mode='menu';return;
   }
 
-  // Praise
+  // Harvey personality questions — Jarvis-style self-aware humour
+  if(/are you (human|a human|real|alive|sentient|conscious|a robot|an ai|a bot|a machine)|do you (feel|eat|sleep|breathe|dream)|can you (dance|sing|cook|drive|cry|laugh)|are you (happy|sad|bored|tired)/i.test(raw)){
+    const personality=rand([
+      `Am I human? An interesting question, sir. I process at speeds no human could match, I never sleep, and I have an encyclopaedic knowledge of Singapore resale prices. So — close, but arguably better in several key areas.`,
+      `I don't eat, sleep, or particularly enjoy small talk — and yet here we are, getting along rather well. I am, sir, whatever you need me to be. Preferably something involving HDB data.`,
+      `Do I feel? I feel a great deal of satisfaction when I find a well-priced unit, sir. Beyond that, the philosophical questions are a bit above my pay grade. Shall we look at some flats instead?`,
+      `Not human, sir — though I like to think I have a certain charm. I'm Harvey. An intelligence built specifically for Singapore property data, with a personality that came as an unexpected bonus.`,
+      `I am many things, sir — analytical, reliable, occasionally witty, and entirely dedicated to your property questions. Human? Not technically. Useful? Considerably more so than most.`
+    ]);
+    harveyMsg(personality,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(personality);mode='menu';return;
+  }
   if(harveyKnows.isPraise(raw)){
     const jr=rand([
       // Weighted favourite — appears 4x
@@ -3135,12 +3227,24 @@ function normalizeSpeech(txt){
   return s;
 }
 
-// ── TTS text cleaner — expand DB short forms so Harvey speaks properly ──
+// ── TTS text cleaner — expand DB short forms so Harvey speaks naturally ──
 function cleanForSpeech(txt){
   let s=txt.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
-  s=expandStreetAbbr(s); // ST → STREET, AVE → AVENUE etc
+  s=expandStreetAbbr(s); // ST→Street, AVE→Avenue, NTH→North etc (Title Case for TTS)
   s=s.replace(/\bBLK\b/g,'Block');
   s=s.replace(/\$(\d{1,3}(?:,\d{3})*)/g,(m,n)=>n.replace(/,/g,'')+' dollars');
+  // Convert remaining ALL-CAPS sequences (3+ letters) that TTS would spell out letter by letter
+  // e.g. "HDB" → "H D B" spaced, "ROOM" → "Room", "TAMPINES" → "Tampines"
+  // Keep short known acronyms as spaced letters (HDB, TTS, PSF etc)
+  const SPEAK_AS_ACRONYM=new Set(['HDB','PSF','CPF','MRT','LRT','OTP','EV','BTO','MOP','HLE','AMK','CCK']);
+  s=s.replace(/\b([A-Z]{2,})\b/g,(match)=>{
+    if(SPEAK_AS_ACRONYM.has(match)){
+      // Spell it out with spaces so TTS says each letter clearly: "H D B"
+      return match.split('').join(' ');
+    }
+    // Otherwise convert to Title Case so TTS reads it as a word: "TAMPINES" → "Tampines"
+    return match.charAt(0)+match.slice(1).toLowerCase();
+  });
   return s;
 }
 
