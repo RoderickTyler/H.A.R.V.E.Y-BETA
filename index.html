@@ -2170,7 +2170,15 @@ async function handleInput(){
     await _handleInputInner(raw);
   }catch(e){
     console.warn('Harvey error:',e);
-    harveyMsg(`I seem to have encountered an unexpected issue, sir. My apologies. Do try again — or reset if needed.`+
+    const errorQuips=[
+      `I actually think I need to sleep now, sir.`,
+      `I am afraid that is not possible, sir.`,
+      `I should probably look into that once my program finishes scanning all of the housing data.`,
+      `Sir, please may I request just a few moments to calibrate.`,
+      `There's only so much I can do, sir.`,
+      `I have run simulations on every known dataset, and none can serve as a viable answer as to what you are searching, my friend.`
+    ];
+    harveyMsg(rand(errorQuips)+
       `<div style="margin-top:8px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ RESET HARVEY</button></div>`,
       [{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
     mode='menu';
@@ -2419,13 +2427,32 @@ async function _handleInputInner(raw){
   ctx={...ctxWithMemory};
   enrichCtx(ctx);
 
+  // "Are you there" — always answered with presence
+  if(/are you there|you there|still there|you online|you awake|hello.*harvey|harvey.*there|u there/i.test(raw)){
+    const presence=rand([
+      `For you, sir — always.`,
+      `At your service, sir. Right here, as ever.`,
+      `Always here, sir. What do you need?`,
+      `For you, sir, always. What can I do for you?`
+    ]);
+    harveyMsg(presence,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(presence);mode='menu';return;
+  }
+
   // Greeting
   if(/^(hi|hello|hey|good\s*(day|morning|afternoon|evening)|howdy|yo\b|sup\b)/i.test(raw)){
-    const greet=rand([
-      `Good day, sir. Always a pleasure. What can I pull up for you?`,
-      `Welcome back, sir. Harvey at your service — shall we look at some transactions, or would you like an estimated value?`,
-      `Ah, good day. I was beginning to wonder. What would you like to know?`,
-      `At your service, sir. The database is warm and ready — what are we after today?`
+    const servicePrefix=rand([
+      `For you, sir — always. `,
+      `At your service, sir. `,
+      `Will do, sir. `,
+      `As you wish. `,
+      `We're online and ready. `
+    ]);
+    const greet=servicePrefix+rand([
+      `What can I pull up for you?`,
+      `Shall we look at some transactions, or would you like an estimated value?`,
+      `I was beginning to wonder. What would you like to know?`,
+      `The database is warm and ready — what are we after today?`
     ]);
     harveyMsg(greet,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
     speak(greet.replace(/<[^>]*>/g,''));mode='menu';return;
@@ -2461,10 +2488,11 @@ async function _handleInputInner(raw){
   if(ctx.isEV||/valuat|estimate|worth|value|how much|price of|check value/i.test(raw)){
     ctx.isEV=true;
     if(!ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.floor){
-      harveyMsg(`Of course, sir. Please go ahead and input your <strong>block number</strong>, <strong>street</strong>, and the <strong>flat type</strong>. Something like:<br><br>
+      const svc=rand([`For you, sir — always. `,`At your service, sir. `,`Will do, sir. `,`As you wish. `]);
+      harveyMsg(`${svc}Please go ahead and input your <strong>block number</strong>, <strong>street</strong>, and the <strong>flat type</strong>. Something like:<br><br>
 <em style="color:var(--c);font-family:var(--mono);font-size:11px">608 Clementi West Street 1 4 room</em><br><br>
 <em style="color:var(--t2);font-size:11px">Floor level is optional — I'll use a mid-floor estimate if not provided. Floor area and lease year are also optional.</em>`,flatTypeChips());
-      speak('Of course, sir. Please go ahead and input your block number, street and flat type.');
+      speak(`${svc.replace(/<[^>]*>/g,'')}Please go ahead and input your block number, street and flat type.`);
       mode='ev_waiting';return;
     }
     mode='ev_waiting';promptMissing(ctx);return;
@@ -2948,11 +2976,12 @@ function goIdle(){
 function wakeFromIdle(){
   if(!isIdle)return;isIdle=false;document.getElementById('idle-overlay')?.remove();resetIdle();
   ctx={};convCtx={};
-  const msg=rand([
-    `Back online, sir. What would you like to look at?`,
-    `Welcome back. Harvey at your service — as always.`,
-    `Systems fully active, sir. Right where you left me.`,
-    `Ah, there you are, sir. Shall we pick up where we left off?`
+  const svc=rand([`For you, sir — always. `,`At your service, sir. `,`We're online and ready. `]);
+  const msg=svc+rand([
+    `What would you like to look at?`,
+    `Harvey at your service — as always.`,
+    `Right where you left me. What are we after?`,
+    `Shall we pick up where we left off?`
   ]);
   harveyMsg(msg,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
   speak(msg);mode='menu';
@@ -3207,10 +3236,19 @@ window.addEventListener('load',async()=>{
 
   setTimeout(()=>{
     if(ok){
-      harveyMsg(`Good day, sir. Harvey is at your service — <strong>${DB.resale.length.toLocaleString()}</strong> HDB resale transactions at your disposal. How may I assist?`,[
+      // ── Time-aware greeting ──
+      const hr=new Date().getHours();
+      const timeOfDay=hr>=5&&hr<12?'morning':hr>=12&&hr<18?'afternoon':'evening';
+      const timeStr=new Date().toLocaleTimeString('en-SG',{hour:'numeric',minute:'2-digit',hour12:true});
+
+      // ── Market briefing line ──
+      const briefing=`Good ${timeOfDay}, sir. It is ${timeStr} local time. The Singapore property market remains active — HDB resale prices are generally well-supported, with affordability holding up reasonably across most towns. That said, prime locations and high-demand estates continue to command a premium, so expect stronger pricing in those pockets. I have <strong>${DB.resale.length.toLocaleString()}</strong> resale transactions ready for your review.`;
+
+      harveyMsg(briefing,[
         {label:'RESALE TRANSACTIONS',val:'search'},
         {label:'ESTIMATE VALUE',val:'estimate value'}
       ]);
+      speak(`Good ${timeOfDay}, sir. It is ${timeStr} local time. The Singapore property market remains active — HDB resale prices are generally well-supported, with affordability holding up across most towns. Prime locations and high-demand estates continue to command a premium. I have ${DB.resale.length.toLocaleString()} resale transactions ready for your review.`);
     } else {
       harveyMsg('I appear to have encountered a data connection issue, sir. A quick refresh should set things right.',[]);
     }
