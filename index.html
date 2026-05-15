@@ -934,8 +934,24 @@ function lookupSizeFromDB(block,street,flatType){
 // Users may type EITHER form — we normalise to DB short form before searching
 
 // Converts user input (long or short) → DB short form for searching
+// ORDER MATTERS: longer phrases must come before shorter ones to avoid partial replacement
 function contractStreetAbbr(s){
   return s
+    // ── Multi-word place names first ──
+    .replace(/\bCHOA\s+CHU\s+KANG\b/g,'CCK')
+    .replace(/\bANG\s+MO\s+KIO\b/g,'AMK')
+    .replace(/\bCOMMONWEALTH\b/g,'C\'WEALTH')
+    .replace(/\bTOA\s+PAYOH\b/g,'TOA PAYOH')   // keep as-is, already in DB
+    // ── Directional qualifiers ──
+    .replace(/\bNORTH\b/g,'NTH')
+    .replace(/\bSOUTH\b/g,'STH')
+    .replace(/\bEAST\b/g,'EST')                  // rare but exists
+    .replace(/\bWEST\b/g,'WST')                  // rare but exists (keep spatial context)
+    .replace(/\bCENTRAL\b/g,'CTRL')
+    .replace(/\bUPPER\b/g,'UPP')
+    .replace(/\bLOWER\b/g,'LWR')
+    .replace(/\bNEW\b/g,'NEW')                   // keep — "New Upper Changi Rd"
+    // ── Street types ──
     .replace(/\bSTREET\b/g,'ST')
     .replace(/\bAVENUE\b/g,'AVE')
     .replace(/\bDRIVE\b/g,'DR')
@@ -945,37 +961,63 @@ function contractStreetAbbr(s){
     .replace(/\bLORONG\b/g,'LOR')
     .replace(/\bJALAN\b/g,'JLN')
     .replace(/\bBUKIT\b/g,'BT')
-    .replace(/\bUPPER\b/g,'UPP')
     .replace(/\bHEIGHTS\b/g,'HTS')
-    .replace(/\bNORTH\b/g,'NTH')
-    .replace(/\bSOUTH\b/g,'STH')
-    .replace(/\bCENTRAL\b/g,'CTRL')
     .replace(/\bTERRACE\b/g,'TER')
-    .replace(/\bPLACE\b/g,'PL')
+    .replace(/\bCRESCENT\b/g,'CRES')
+    .replace(/\bGARDENS\b/g,'GDNS')
+    .replace(/\bCOURTS?\b/g,'CTS')
+    .replace(/\bPARK\b/g,'PK')
+    .replace(/\bMARKET\b/g,'MKT')
     .replace(/\bGROVE\b/g,'GR')
+    .replace(/\bPLACE\b/g,'PL')
+    .replace(/\bLANE\b/g,'LN')
+    .replace(/\bLINK\b/g,'LINK')
+    .replace(/\bWALK\b/g,'WALK')
+    .replace(/\bRISE\b/g,'RISE')
+    .replace(/\bVIEW\b/g,'VIEW')
+    .replace(/\bWAY\b/g,'WAY')
+    .replace(/\bCIRCLE\b/g,'C')
     .replace(/\s+/g,' ').trim();
 }
 
-// Converts DB short form → full English for TTS (so Harvey doesn't say "ess tee")
+// Converts DB short form → full English for TTS so Harvey speaks naturally
+// ORDER MATTERS: longer/more specific patterns before shorter ones
 function expandStreetAbbr(s){
   return s
-    .replace(/\bST\b/g,'STREET')
-    .replace(/\bAVE\b/g,'AVENUE')
-    .replace(/\bDR\b/g,'DRIVE')
-    .replace(/\bRD\b/g,'ROAD')
-    .replace(/\bCL\b/g,'CLOSE')
-    .replace(/\bCRES\b/g,'CRESCENT')
-    .replace(/\bLOR\b/g,'LORONG')
-    .replace(/\bJLN\b/g,'JALAN')
-    .replace(/\bBT\b/g,'BUKIT')
-    .replace(/\bUPP\b/g,'UPPER')
-    .replace(/\bHTS\b/g,'HEIGHTS')
+    // ── Multi-word abbreviations first ──
+    .replace(/\bCCK\b/g,'CHOA CHU KANG')
+    .replace(/\bAMK\b/g,'ANG MO KIO')
+    .replace(/\bC'WEALTH\b/g,'COMMONWEALTH')
+    .replace(/\bC\'WEALTH\b/g,'COMMONWEALTH')
+    // ── Directional ──
     .replace(/\bNTH\b/g,'NORTH')
     .replace(/\bSTH\b/g,'SOUTH')
+    .replace(/\bEST\b/g,'EAST')
+    .replace(/\bWST\b/g,'WEST')
     .replace(/\bCTRL\b/g,'CENTRAL')
+    .replace(/\bUPP\b/g,'UPPER')
+    .replace(/\bLWR\b/g,'LOWER')
+    // ── Street types ──
+    .replace(/\bAVE\b/g,'AVENUE')
+    .replace(/\bCRES\b/g,'CRESCENT')
+    .replace(/\bGDNS\b/g,'GARDENS')
+    .replace(/\bCTS\b/g,'COURTS')
+    .replace(/\bHTS\b/g,'HEIGHTS')
     .replace(/\bTER\b/g,'TERRACE')
+    .replace(/\bLOR\b/g,'LORONG')
+    .replace(/\bJLN\b/g,'JALAN')
+    .replace(/\bMKT\b/g,'MARKET')
+    .replace(/\bBT\b/g,'BUKIT')
+    .replace(/\bRD\b/g,'ROAD')
+    .replace(/\bDR\b/g,'DRIVE')
+    .replace(/\bCL\b/g,'CLOSE')
+    .replace(/\bST\b/g,'STREET')
     .replace(/\bPL\b/g,'PLACE')
     .replace(/\bGR\b/g,'GROVE')
+    .replace(/\bLN\b/g,'LANE')
+    .replace(/\bPK\b/g,'PARK')
+    // ── Full words — no expand needed but ensure correct casing for TTS ──
+    .replace(/\bBLK\b/g,'BLOCK')
     .replace(/\s+/g,' ').trim();
 }
 
@@ -1003,7 +1045,7 @@ function reverseStreet(streetRaw){
   // Extract HARD constraints from the input:
   // 1) Street TYPE (ST / AVE / DR / RD / CL etc) — must match exactly, no crossing AVE↔ST
   // 2) Trailing NUMBER (1, 22, 44A) — must match exactly
-  const shortTypes=['ST','AVE','DR','RD','CL','CRES','LOR','JLN','BT','UPP','HTS','NTH','STH','CTRL','TER','PL','GR','LN','WALK','LINK','RISE','VIEW','WAY'];
+  const shortTypes=['ST','AVE','DR','RD','CL','CRES','LOR','JLN','BT','UPP','LWR','HTS','NTH','STH','EST','WST','CTRL','TER','PL','GR','LN','WALK','LINK','RISE','VIEW','WAY','CCK','AMK','GDNS','CTS','PK','MKT'];
   const typeRxStr=shortTypes.join('|');
   const typeRx=new RegExp(`\\b(${typeRxStr})\\b`,'g');
   const typeMatches=[...s.matchAll(typeRx)];
@@ -1013,7 +1055,7 @@ function reverseStreet(streetRaw){
   const streetNum=numMatch?numMatch[1]:null;
 
   // Strip type words AND numbers to get pure name words
-  const stripRx=new RegExp(`\\b(${typeRxStr}|STREET|AVENUE|DRIVE|ROAD|CLOSE|CRESCENT|LANE|PLACE|HEIGHTS|GROVE|TERRACE|NORTH|SOUTH|EAST|WEST|CENTRAL|UPPER|LOWER|LORONG|JALAN|BUKIT|NEW|OLD)\\b`,'g');
+  const stripRx=new RegExp(`\\b(${typeRxStr}|STREET|AVENUE|DRIVE|ROAD|CLOSE|CRESCENT|LANE|PLACE|HEIGHTS|GROVE|TERRACE|GARDENS|COURTS|PARK|MARKET|NORTH|SOUTH|EAST|WEST|CENTRAL|UPPER|LOWER|LORONG|JALAN|BUKIT|COMMONWEALTH|CHOA|CHU|KANG|ANG|MO|KIO|NEW|OLD)\\b`,'g');
   const nameOnly=s.replace(stripRx,'').replace(/\d+[A-Z]?/g,'').replace(/\s+/g,' ').trim();
   const nameWords=nameOnly.split(' ').filter(w=>w.length>=3);
 
@@ -1088,7 +1130,7 @@ function _srResult(matches){
 // ── Block+street → canonical town ──
 function reverseTown(block,streetRaw){
   if(!DB.loaded)return null;
-  const core=(streetRaw||'').toUpperCase().replace(/\b(STREET|ROAD|AVENUE|DRIVE|CRESCENT|CLOSE|WALK|LINK|LANE|WAY|ST|RD|AVE|DR|CRES|LN)\b/g,'').replace(/\s+/g,' ').trim();
+  const core=(streetRaw||'').toUpperCase().replace(/\b(STREET|ROAD|AVENUE|DRIVE|CRESCENT|CLOSE|WALK|LINK|LANE|WAY|GARDENS|COURTS|PARK|MARKET|TERRACE|LORONG|JALAN|HEIGHTS|GROVE|PLACE|ST|RD|AVE|DR|CRES|LN|LOR|JLN|HTS|GR|PL|TER|PK|GDNS|CTS|MKT)\b/g,'').replace(/\s+/g,' ').trim();
   const match=DB.resale.find(r=>(!block||r.block===block)&&(!core||r.street_name.toUpperCase().includes(core.slice(0,6))));
   return match?{town:match.town,street:match.street_name}:null;
 }
@@ -1127,7 +1169,7 @@ function parseQuery(raw){
   // Handle: "608 Clementi West Street 1" → "Clementi West Street 1"
   // Also handle abbreviations: ST, DR, CL, AVE, RD, CRES etc
   const qNoBlock=q.replace(/^\s*(?:BLK|BLOCK)?\s*\d+[A-Z]?\s*/,'').trim();
-  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN)\s*\d*[A-Z]?)\b/);
+  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK)\s*\d*[A-Z]?)\b/);
   if(stMatch){
     let candidate=stMatch[1].trim()
       .replace(/^\s*(?:BLK|BLOCK)\s*\d+[A-Z]?\s*/i,'')
@@ -3020,9 +3062,7 @@ let speechTimer=null; // delay before processing — don't interrupt user
 function normalizeSpeech(txt){
   let s=txt.trim();
   // Contract long-form street words → DB short form (works for both typed and voice)
-  // e.g. user types "Clementi West Street 1" → "Clementi West ST 1" for DB matching
   s=contractStreetAbbr(s.toUpperCase());
-  // Also handle BLK → keep as-is (DB uses BLK prefix in some places but not street names)
 
   // ── Flat type phonetic fixes ──
   s=s.replace(/\b(tree|three|tri|thri|free|3)\s*(room|rum|roo|ruum)\b/gi,'3 room');
@@ -3046,6 +3086,37 @@ function normalizeSpeech(txt){
   s=s.replace(/\bqueens?town?\b/gi,'queenstown');
   s=s.replace(/\bjurong?\b/gi,'jurong');
   s=s.replace(/\bserangoon?\b/gi,'serangoon');
+  s=s.replace(/\bsemba?wang?\b/gi,'sembawang');
+  s=s.replace(/\bgeyla?ng?\b/gi,'geylang');
+  s=s.replace(/\bmar[ie]+\s*para?de?\b/gi,'marine parade');
+  s=s.replace(/\bpasir\s*ri[sz]\b/gi,'pasir ris');
+  s=s.replace(/\btoa\s*pay[ao]h?\b/gi,'toa payoh');
+  s=s.replace(/\bang\s*mo\s*ki[oa]?\b/gi,'ang mo kio');
+  s=s.replace(/\bchoa\s*chu\s*kang?\b/gi,'choa chu kang');
+  s=s.replace(/\bwhamp[oa]+\b/gi,'whampoa');
+  s=s.replace(/\bbukit\s*tima[hn]?\b/gi,'bukit timah');
+  s=s.replace(/\bbukit\s*batok?\b/gi,'bukit batok');
+  s=s.replace(/\bbukit\s*mera[h]?\b/gi,'bukit merah');
+  s=s.replace(/\bbukit\s*panjang?\b/gi,'bukit panjang');
+
+  // ── Street abbreviation voice fixes (in case voice says the short form) ──
+  // These ensure spoken "ave" "dr" "cl" etc get normalised for DB matching
+  s=s.replace(/\bdrive\b/gi,'DR');
+  s=s.replace(/\bclose\b/gi,'CL');
+  s=s.replace(/\bstreet\b/gi,'ST');
+  s=s.replace(/\bavenue\b/gi,'AVE');
+  s=s.replace(/\broad\b/gi,'RD');
+  s=s.replace(/\bcrescent\b/gi,'CRES');
+  s=s.replace(/\blorong\b/gi,'LOR');
+  s=s.replace(/\bjalan\b/gi,'JLN');
+  s=s.replace(/\bnorth\b/gi,'NTH');
+  s=s.replace(/\bsouth\b/gi,'STH');
+  s=s.replace(/\bcentral\b/gi,'CTRL');
+  s=s.replace(/\bupper\b/gi,'UPP');
+  s=s.replace(/\blane\b/gi,'LN');
+  s=s.replace(/\bterrace\b/gi,'TER');
+  s=s.replace(/\bheights\b/gi,'HTS');
+  s=s.replace(/\bgardens\b/gi,'GDNS');
 
   // ── Floor number words ──
   s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(one|wan|first)\b/gi,'floor 1');
@@ -3058,7 +3129,6 @@ function normalizeSpeech(txt){
   s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(eight|ate|eighth)\b/gi,'floor 8');
   s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(nine|ninth)\b/gi,'floor 9');
   s=s.replace(/\b(floor|level|storey|unit.?s?\s+level)\s+(ten|tenth)\b/gi,'floor 10');
-  // "unit's level" / "units level" → "floor" keyword so parser picks it up
   s=s.replace(/\bunits?\s*[''']?\s*level\b/gi,'floor');
   s=s.replace(/\bwhich is (the\s*)?floor\b/gi,'floor');
 
