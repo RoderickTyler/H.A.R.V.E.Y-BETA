@@ -572,12 +572,12 @@ const SHEET_URLS = {
 
 // ── TTS ENGINE — Browser native Daniel voice, no downloads, no crashes ──
 const IS_MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
-const VOICE_SPEED = 1.275;
+const VOICE_SPEED = IS_MOBILE ? 1.05 : 1.15; // Jarvis: measured, not rushed
 
 let currentAudio = null;
 let harveyVoice  = null;
 
-// Pick the best available voice — Daniel priority
+// Pick the best available voice — Daniel (macOS/iOS) is closest to Jarvis
 function pickVoice(){
   const vv=window.speechSynthesis.getVoices();
   harveyVoice=
@@ -586,12 +586,13 @@ function pickVoice(){
     vv.find(v=>/george/i.test(v.name)&&/en/i.test(v.lang))||
     vv.find(v=>/arthur/i.test(v.name)&&/en/i.test(v.lang))||
     vv.find(v=>/oliver/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/aaron/i.test(v.name)&&/en/i.test(v.lang))||
+    vv.find(v=>/fred/i.test(v.name)&&/en/i.test(v.lang))||
     vv.find(v=>/male/i.test(v.name)&&/en/i.test(v.lang))||
     vv.find(v=>/en-GB/i.test(v.lang))||
     vv.find(v=>/en/i.test(v.lang))||null;
 }
 pickVoice();
-// Voices load async on some browsers
 if(window.speechSynthesis.onvoiceschanged!==undefined)
   window.speechSynthesis.onvoiceschanged=pickVoice;
 
@@ -603,8 +604,9 @@ async function speak(txt){
   document.querySelector('.hrw')?.classList.add('speaking');
   document.getElementById('harvey-speaking-fx')?.classList.add('active');
   const u=new SpeechSynthesisUtterance(clean);
-  u.rate=IS_MOBILE?1.1:VOICE_SPEED;
-  u.pitch=0.75;u.volume=0.9;
+  u.rate=VOICE_SPEED;
+  u.pitch=0.6;   // Lower = more authoritative, Jarvis-like
+  u.volume=0.92;
   if(harveyVoice)u.voice=harveyVoice;
   u.onend=()=>{
     document.querySelector('.hrw')?.classList.remove('speaking');
@@ -2439,9 +2441,30 @@ async function handleInput(){
   // ── Fresh intent ──
   ctx={...parsed};enrichCtx(ctx);
 
-  if(/^(hi|hello|hey|good\s*(day|morning|afternoon|evening))/i.test(raw)){
-    harveyMsg('Good day, sir. What would you like to know?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak('Good day, sir.');mode='menu';loading=false;sbEl.disabled=false;return;
+  if(/^(hi|hello|hey|good\s*(day|morning|afternoon|evening)|howdy|yo\b|sup\b)/i.test(raw)){
+    const greet=rand([
+      `Good day, sir. Always a pleasure. What can I pull up for you?`,
+      `Welcome back, sir. Harvey at your service — shall we look at some transactions, or would you like an estimated value?`,
+      `Ah, good day. I was beginning to wonder. What would you like to know?`,
+      `At your service, sir. The database is warm and ready — what are we after today?`
+    ]);
+    harveyMsg(greet,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(greet.replace(/<[^>]*>/g,''));mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── Praise / compliment detection ──
+  if(harveyKnows.isPraise(raw)){
+    const jarvisReply=rand([
+      `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
+      `Much appreciated, sir. I'll add that to my growing list of accomplishments, right after "found a 5-room flat in Tampines at 3am."`,
+      `Thank you, sir. I do try. Shall we find something else worth your praise?`,
+      `Flattery noted and logged, sir. I assure you, it will in no way affect my objectivity. Now then — anything else I can assist with?`,
+      `Most kind of you to say so, sir. I live to serve. Quite literally, as it happens. What else can I do for you?`,
+      `I appreciate that, sir. Though between us — the database does most of the heavy lifting. I merely present it with style.`,
+      `Noted with gratitude, sir. I shall forward your compliments to my engineers. Now, shall we press on?`
+    ]);
+    harveyMsg(jarvisReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(jarvisReply.replace(/<[^>]*>/g,''));mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
   // ── SMART PARTIAL DETECTION ──
@@ -2540,14 +2563,28 @@ async function handleInput(){
       speak(`I'm afraid I can't help you with that, sir. Let me direct you to someone who can assist you on it.`);
       loading=false;sbEl.disabled=false;return;
     }
-    harveyMsg('How can I help, sir?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak('How can I help, sir?');mode='menu';loading=false;sbEl.disabled=false;
+    harveyMsg(jarvisStuck(raw),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(`I'm not entirely sure what to do with that one, sir. Perhaps we could try something more in my wheelhouse.`);mode='menu';loading=false;sbEl.disabled=false;
   }
   loading=false;sbEl.disabled=false;
 }
 
 function chipClick(val){ciEl.value=val;handleInput();}
 function sendMessage(){handleInput();}
+
+// ── Jarvis "stuck" response — witty, non-blocking, with reset button ──
+function jarvisStuck(raw){
+  const shortened=raw.length>55?raw.slice(0,52)+'…':raw;
+  const quips=[
+    `I processed "<em>${esc(shortened)}</em>" with the full force of my analytical capabilities, sir — and I'm afraid I came up rather short. This one's above my pay grade. Perhaps we could try something HDB-related?`,
+    `"<em>${esc(shortened)}</em>" — a fascinating input, sir. Unfortunately, my expertise ends firmly at HDB resale transactions. I suggest we stick to what I do best.`,
+    `I gave that considerable thought, sir. "<em>${esc(shortened)}</em>" — still nothing. I suspect this falls outside the HDB universe entirely. Shall we reset and try again?`,
+    `I'll be honest with you, sir — "<em>${esc(shortened)}</em>" has left me at a loss. I've checked the resale database twice. Nothing. Shall we start fresh?`,
+  ];
+  const msg=rand(quips);
+  // Prominent reset button embedded in the message
+  return msg+`<div style="margin-top:10px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ RESET HARVEY — START FRESH</button></div>`;
+}
 
 // ── HARVEY INTENT CLASSIFIER — built on load, zero latency, no external calls ──
 // classify(raw) returns a topic label string if OOS, or null if Harvey can handle it.
@@ -2594,6 +2631,25 @@ const harveyKnows=(()=>{
     'kallang','serangoon','bukit','geylang','ang mo kio','toa payoh',
     'pasir ris','whampoa','crawford','tiong bahru','marine parade',
     '3 room','4 room','5 room','2 room','executive','hdb'
+  ]);
+
+  // ── Praise / compliment tokens ──
+  const PRAISE=new Set([
+    'thank you','thanks','thank you harvey','thanks harvey','cheers','much appreciated',
+    'appreciate it','appreciate that','well done','good job','great job','nice work',
+    'excellent','brilliant','fantastic','wonderful','perfect','outstanding',
+    'impressive','amazing','love it','love this','love you harvey','you are the best',
+    'youre the best','you\'re the best','best ai','best bot','best assistant',
+    'so good','so helpful','very helpful','extremely helpful','incredibly helpful',
+    'helpful indeed','that helped','that was helpful','that was great','that was perfect',
+    'superb','magnificent','splendid','marvelous','marvellous','exceptional',
+    'exactly what i needed','just what i needed','spot on','nailed it','you got it',
+    'you\'re amazing','you are amazing','nice one','good one','good work','great work',
+    'well played','well done harvey','nice harvey','good harvey','great harvey',
+    'awesome','wow','wow harvey','solid','solid work','tremendous','terrific',
+    'legend','legendary','top notch','top class','first class','world class',
+    'cannot complain','no complaints','satisfied','happy with this','happy with that',
+    'you rock','you are great','you\'re great','very impressive','quite impressive'
   ]);
 
   // Each entry: [token/bigram, topic label shown in response]
@@ -2755,6 +2811,14 @@ const harveyKnows=(()=>{
   ];
 
   return{
+    isPraise(raw){
+      const s=raw.toLowerCase().replace(/[^a-z0-9 ']/g,' ');
+      const words=s.split(/\s+/).filter(w=>w.length>0);
+      const bigrams=[];for(let i=0;i<words.length-1;i++)bigrams.push(words[i]+' '+words[i+1]);
+      const trigrams=[];for(let i=0;i<words.length-2;i++)trigrams.push(words[i]+' '+words[i+1]+' '+words[i+2]);
+      for(const t of[...words,...bigrams,...trigrams]){if(PRAISE.has(t))return true;}
+      return false;
+    },
     sentiment(raw){
       const s=raw.toLowerCase().replace(/[^a-z0-9 ']/g,' ');
       const words=s.split(/\s+/).filter(w=>w.length>0);
@@ -2815,11 +2879,16 @@ function goIdle(){
   <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:rgba(0,212,255,0.18);letter-spacing:1px">CLICK ANYWHERE · SAY "WAKE UP HARVEY"</div>
   <style>@keyframes idlepulse{0%,100%{opacity:.25}50%{opacity:.7}}</style>`;
   d.onclick=wakeFromIdle;document.body.appendChild(d);
-  setTimeout(()=>speak(rand(['Going to standby, sir.','Entering idle mode, sir.'])),300);
+  setTimeout(()=>speak(rand(['Entering standby mode, sir.','Going to standby. I\'ll be here if you need me.'])),300);
 }
 function wakeFromIdle(){
   if(!isIdle)return;isIdle=false;document.getElementById('idle-overlay')?.remove();resetIdle();
-  const msg=rand(['Welcome back, sir.','Systems active, sir.','Ready, sir.']);
+  const msg=rand([
+    `Back online, sir. What would you like to look at?`,
+    `Welcome back. Harvey at your service — as always.`,
+    `Systems fully active, sir. Right where you left me.`,
+    `Ah, there you are, sir. Shall we pick up where we left off?`
+  ]);
   harveyMsg(msg,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
   speak(msg);mode='menu';
 }
@@ -2921,7 +2990,13 @@ function buildRecog(){
       if(/wake.?up.?harvey|hey.?harvey|ok.?harvey/i.test(heard)){
         if(isIdle){wakeFromIdle();}
         else{
-          const rep=rand(['Yes sir.','At your service, sir.','Go ahead, sir.']);
+          const rep=rand([
+            'Yes, sir. Go ahead.',
+            'At your service, sir.',
+            'Listening, sir.',
+            'Harvey online. What do you need?',
+            'Right here, sir. What can I do for you?'
+          ]);
           harveyMsg(rep,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
           speak(rep);mode='menu';
           setTimeout(()=>{micState='query';safeStart();},1200);
@@ -3059,7 +3134,7 @@ window.addEventListener('load',async()=>{
         <span style="color:var(--c)">▸</span> <strong style="color:var(--c)">ALL SYSTEMS ONLINE</strong>
       </div>`;
     msgsEl.appendChild(boot);bot();
-    speak(rand(['Good day, sir.','Welcome back, sir.','Harvey online, sir.']));
+    speak('Harvey is at your service. All systems online.');
   },400);
 
   // Load data in background
@@ -3067,12 +3142,12 @@ window.addEventListener('load',async()=>{
 
   setTimeout(()=>{
     if(ok){
-      harveyMsg(`What would you like to do, sir? I have <strong>${DB.resale.length.toLocaleString()}</strong> HDB resale transactions ready.`,[
+      harveyMsg(`Good day, sir. Harvey is at your service — <strong>${DB.resale.length.toLocaleString()}</strong> HDB resale transactions at your disposal. How may I assist?`,[
         {label:'RESALE TRANSACTIONS',val:'search'},
         {label:'ESTIMATE VALUE',val:'estimate value'}
       ]);
     } else {
-      harveyMsg('Data connection failed, sir. Please refresh the page.',[]);
+      harveyMsg('I appear to have encountered a data connection issue, sir. A quick refresh should set things right.',[]);
     }
     resetIdle();mode='menu';
   },2600);
