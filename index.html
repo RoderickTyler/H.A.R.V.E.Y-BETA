@@ -1617,27 +1617,31 @@ function showEV(result,params){
     For a more grounded assessment: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>
   </div>`:'';
 
-  // Detect floor inversion: any lower-floor comp priced HIGHER than a higher-floor comp
+  // Detect floor inversion: a comp BELOW the user's floor is priced HIGHER than a comp AT or ABOVE it
+  // Rule: only flag if the offending comp's floorMid is strictly LESS than the user's floor (result.floor)
+  // Never flag comps that are at the same level or higher — those are normal or expected
   let inversionNote='';
   let inversionSpoken='';
   if(compsData.length>=2){
-    // Sort by floor ascending
-    const sorted=[...compsData].sort((a,b)=>a.floorMid-b.floorMid);
-    // Find the highest-priced comp and check if it's on a LOWER floor than the lowest-priced comp
-    const highestPriceComp=compsData.reduce((a,b)=>a.price>b.price?a:b);
-    const lowestPriceComp=compsData.reduce((a,b)=>a.price<b.price?a:b);
-    const invertedByPrice=highestPriceComp.floorMid<lowestPriceComp.floorMid;
-    // Also check if any lower-floor is priced higher than a higher-floor in sequence
-    let hasSequentialInversion=false;
-    for(let i=0;i<sorted.length-1;i++){
-      if(sorted[i].price>sorted[i+1].price*1.02){hasSequentialInversion=true;break;}
-    }
-    if(invertedByPrice||hasSequentialInversion){
-      const lf=highestPriceComp;
-      inversionNote=`<div class="ev-warn" style="border-color:rgba(255,170,0,.4);background:rgba(255,170,0,.06);margin-top:8px">
-        ⚠ I notice a lower floor (${esc(lf.storey_range)}) transacted at a higher price of <strong style="color:var(--a)">${fmtP(lf.price)}</strong> — this is unusual and may reflect unit-specific factors such as renovation, facing, or negotiation. The floor premium model may not fully capture this, sir. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">You may want to check in with a professional →</a>
-      </div>`;
-      inversionSpoken=`I also notice something worth flagging, sir — a lower floor transacted at a higher price of ${fmtP(lf.price)}. This is unusual and may reflect unit-specific factors. You may want to check in with a professional agent.`;
+    const myFloorNum=Number(result.floor)||1;
+
+    // Split comps into below-user and at/above-user
+    const belowUser=compsData.filter(r=>r.floorMid<myFloorNum);
+    const atOrAbove=compsData.filter(r=>r.floorMid>=myFloorNum);
+
+    if(belowUser.length>0&&atOrAbove.length>0){
+      // Find highest-priced comp that is BELOW the user's floor
+      const highestBelow=belowUser.reduce((a,b)=>a.price>b.price?a:b);
+      // Find lowest-priced comp that is AT or ABOVE the user's floor
+      const lowestAbove=atOrAbove.reduce((a,b)=>a.price<b.price?a:b);
+
+      // Only flag if a lower floor is genuinely priced MORE than a higher (or equal) floor
+      if(highestBelow.price>lowestAbove.price*1.02){
+        inversionNote=`<div class="ev-warn" style="border-color:rgba(255,170,0,.4);background:rgba(255,170,0,.06);margin-top:8px">
+          ⚠ I notice a lower floor (${esc(highestBelow.storey_range)}) transacted at a higher price of <strong style="color:var(--a)">${fmtP(highestBelow.price)}</strong> compared to units at or above your floor — this is unusual and may reflect unit-specific factors such as renovation, facing, or negotiation. The floor premium model may not fully capture this, sir. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">You may want to check in with a professional →</a>
+        </div>`;
+        inversionSpoken=`I also notice something worth flagging, sir — a lower floor at storey ${cleanForSpeech(highestBelow.storey_range)} transacted at a higher price of ${fmtP(highestBelow.price)} compared to units at or above your level. This may reflect unit-specific factors. You may want to check in with a professional agent.`;
+      }
     }
   }
 
