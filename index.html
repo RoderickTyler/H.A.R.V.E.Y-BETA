@@ -2795,10 +2795,6 @@ function jarvisStuck(raw){
   return msg+`<div style="margin-top:10px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ RESET HARVEY — START FRESH</button></div>`;
 }
 
-  const msg=rand(quips);
-  return msg+`<div style="margin-top:10px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ RESET HARVEY — START FRESH</button></div>`;
-}
-
 // ══════════════════════════════════════════════════════════════════════
 // HARVEY CORPUS CHITCHAT — Loaded on boot, zero latency, no API calls
 // Covers: daily life, Singapore life, about Harvey, Jarvis meta,
@@ -3533,8 +3529,6 @@ const harveyKnows=(()=>{
       return fn(topic,raw);
     }
 
-  };
-})();
   };
 })();
 
