@@ -2555,16 +2555,27 @@ async function handleInput(){
       speak(`I'm afraid the data and numbers present themselves as such, sir. The estimate reflects actual recorded transactions. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
       loading=false;sbEl.disabled=false;return;
     }
-    // ── Out-of-scope detection — local classifier, zero latency ──
+
+    // ── HDB meta-questions Harvey can actually answer from DB ──
+    const metaResult=harveyKnows.tryMeta(raw,DB);
+    if(metaResult){
+      harveyMsg(metaResult,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+      speak(metaResult.replace(/<[^>]*>/g,'').slice(0,200));
+      loading=false;sbEl.disabled=false;return;
+    }
+
+    // ── Out-of-scope detection ──
     const oosResult=harveyKnows.classify(raw);
     if(oosResult&&!isReaction){
       const quip=harveyKnows.quip(raw,oosResult);
       harveyMsg(quip,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-      speak(`I'm afraid I can't help you with that, sir. Let me direct you to someone who can assist you on it.`);
+      speak(`That one's a little outside my territory, sir. Let me point you to someone who can help.`);
       loading=false;sbEl.disabled=false;return;
     }
-    harveyMsg(jarvisStuck(raw),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak(`I'm not entirely sure what to do with that one, sir. Perhaps we could try something more in my wheelhouse.`);mode='menu';loading=false;sbEl.disabled=false;
+
+    // ── Truly unknown — attempt with timeout, then graceful give-up ──
+    await harveyAttempt(raw);
+    loading=false;sbEl.disabled=false;return;
   }
   loading=false;sbEl.disabled=false;
 }
@@ -2572,7 +2583,72 @@ async function handleInput(){
 function chipClick(val){ciEl.value=val;handleInput();}
 function sendMessage(){handleInput();}
 
-// ── Jarvis "stuck" response — witty, non-blocking, with reset button ──
+// ── Harvey attempt — "I'll try but no promises" + 10s timeout give-up ──
+async function harveyAttempt(raw){
+  // Step 1: Show "attempting" message with inline STOP/RESET button
+  const attemptId='ha-'+Date.now();
+  const attemptDiv=document.createElement('div');attemptDiv.className='msg-ai';attemptDiv.id=attemptId;
+  const shortened=raw.length>60?raw.slice(0,57)+'…':raw;
+  attemptDiv.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
+    <span>// HARVEY — ATTEMPTING</span>
+    <span style="display:flex;gap:4px">
+      <button class="stop-btn" onclick="stopSpeech()" title="Stop speaking">⏹ STOP</button>
+      <button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3)" onclick="chipClick('__restart__')" title="Reset Harvey">↺ NEW</button>
+    </span>
+  </span>
+  <div class="mbub">
+    <em style="color:var(--a);font-family:var(--mono);font-size:10px">Honestly, this isn't what I was built for — but I'll make an attempt. No promises, sir.</em>
+    <div style="display:flex;gap:4px;margin-top:10px">
+      <button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="document.getElementById('${attemptId}')?.remove();chipClick('__restart__')">↺ ACTUALLY, LET'S RESET</button>
+    </div>
+  </div>`;
+  msgsEl.appendChild(attemptDiv);bot();
+  speak(`Honestly, this isn't what I was built for, sir — but I'll make an attempt. No promises.`);
+
+  // Step 2: Try for up to 10 seconds — check if DB can produce anything useful
+  const result=await Promise.race([
+    tryHarveyBestEffort(raw),
+    new Promise(res=>setTimeout(()=>res(null),10000))
+  ]);
+
+  // Remove the "attempting" message
+  document.getElementById(attemptId)?.remove();
+
+  if(result){
+    harveyMsg(result,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(result.replace(/<[^>]*>/g,'').slice(0,200));
+  } else {
+    // Give-up message
+    const giveup=`I tried my best, sir — but to no avail. And I want to be clear: <em style="color:var(--a)">this is definitely not my fault</em>. Perhaps you may want to seek a more relevant question. I'm at my finest with HDB resale transactions and valuations.`;
+    harveyMsg(giveup+`<div style="margin-top:10px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ START FRESH</button></div>`,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(`I tried my best, sir, but to no avail. This is definitely not my fault. Perhaps a more relevant question next time.`);
+  }
+  mode='menu';
+}
+
+// Best-effort attempt — try to extract anything meaningful from DB
+async function tryHarveyBestEffort(raw){
+  await new Promise(r=>setTimeout(r,800)); // brief thinking pause
+  if(!DB.loaded||!DB.resale.length)return null;
+
+  const q=raw.toLowerCase();
+  // Try to find any matching records with a loose search
+  const words=q.replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>3);
+  const towns=Object.keys(DB.townStreets||{});
+  const matchedTown=towns.find(t=>q.includes(t.toLowerCase()));
+
+  if(matchedTown){
+    const recs=DB.resale.filter(r=>r.town===matchedTown).slice(0,5);
+    if(recs.length){
+      const prices=recs.map(r=>Number(r.resale_price)).filter(p=>p>0);
+      const avg=prices.length?Math.round(prices.reduce((a,b)=>a+b,0)/prices.length):0;
+      return `I found some data related to <strong>${matchedTown}</strong>, sir — though I'm not entirely sure that's what you were after. Average resale price: <strong style="color:var(--g)">${fmtP(avg)}</strong> across ${recs.length} recent records. If you'd like a proper search, just say the word.`;
+    }
+  }
+  return null;
+}
+
+// ── Jarvis "stuck" response (kept for inline use) ──
 function jarvisStuck(raw){
   const shortened=raw.length>55?raw.slice(0,52)+'…':raw;
   const quips=[
@@ -2582,7 +2658,6 @@ function jarvisStuck(raw){
     `I'll be honest with you, sir — "<em>${esc(shortened)}</em>" has left me at a loss. I've checked the resale database twice. Nothing. Shall we start fresh?`,
   ];
   const msg=rand(quips);
-  // Prominent reset button embedded in the message
   return msg+`<div style="margin-top:10px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ RESET HARVEY — START FRESH</button></div>`;
 }
 
@@ -2802,15 +2877,61 @@ const harveyKnows=(()=>{
     return[...words,...bigrams,...trigrams];
   }
 
-  // Casual quip templates — Harvey parrots back what was asked
+  // Casual quip templates — Jamie-style (HDB chatbot) but with Jarvis wit
+  // Inspired by Ask Jamie / HDB Help chatbot: acknowledge, redirect, keep it warm
   const QUIPS=[
-    (topic,raw)=>`Ha — "${esc(raw.length>60?raw.slice(0,57)+'…':raw)}", sir? I'm afraid ${topic} is a little outside my lane. I deal in HDB resale data, not life's other great mysteries. Let me direct you to someone who can assist — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
-    (topic,raw)=>`"${esc(raw.length>55?raw.slice(0,52)+'…':raw)}" — I appreciate the curiosity, sir, but ${topic} is quite beyond what I was built for. I'm strictly a resale data machine. Let me direct you to someone who can assist — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
-    (topic,raw)=>`${topic}, sir? That one's not in my database, I'm afraid — and believe me, it's quite a database. I can't help you with ${topic}, but someone else certainly can — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
-    (topic,raw)=>`I'm afraid I can't help you with ${topic}, sir — I wouldn't want to embarrass myself trying. HDB resale data, yes. Everything else? Let me direct you to someone who can assist — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+    // Jamie-style: acknowledge the topic, be warm, redirect clearly
+    (topic,raw)=>`I see you're asking about <strong>${topic}</strong>, sir. That's a little outside my area — I'm specifically built for HDB resale transactions and property valuations. For ${topic}, I'd suggest reaching out to someone better equipped to help. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a><div style="margin-top:8px;font-family:var(--mono);font-size:9px;color:var(--t3)">I'm Harvey — HDB Resale & Valuation. For everything else, there's a human.</div>`,
+    // Jarvis wit: parrot it back, light-hearted
+    (topic,raw)=>`Ha — <em>"${esc(raw.length>55?raw.slice(0,52)+'…':raw)}"</em>, sir? I appreciate the spirit of enquiry, truly. But ${topic} is well outside my remit. I deal in blocks, flat types, and resale prices — not the finer things in life. Let me point you to someone who can: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+    // Jamie-style: polite decline, offer alternative
+    (topic,raw)=>`I'm not able to assist with ${topic}, sir — that falls outside what I was designed to do. My expertise is HDB resale data and valuations. If that's something you need, I'm all yours. Otherwise, do feel free to reach out to a professional: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us →</a>`,
+    // Jarvis: self-aware humour
+    (topic,raw)=>`${topic}, sir? That one's genuinely not in my database — and I have a rather impressive database. I'm afraid I'll have to refer you elsewhere on this one. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a> They're considerably more well-rounded than I am.`,
+    // Jamie-style: warm, non-judgmental
+    (topic,raw)=>`That's an interesting question about ${topic}, sir — but I'm only set up to help with HDB resale transactions and valuations. For ${topic}, you'd be better served by someone with broader expertise. Do reach out: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
   ];
 
   return{
+    // ── HDB meta-questions Harvey can answer directly from DB ──
+    tryMeta(raw,DB){
+      if(!DB||!DB.resale||!DB.resale.length)return null;
+      const q=raw.toLowerCase();
+      const now=new Date();
+      const thisMonth=now.toISOString().slice(0,7); // YYYY-MM
+      const lastMonth=new Date(now.getFullYear(),now.getMonth()-1,1).toISOString().slice(0,7);
+
+      // Total transactions this month
+      if(/total.*(transaction|record|sale|sold).*(this month|month)/i.test(raw)||/(this month|month).*(total|how many|number|count).*(transaction|sale)/i.test(raw)){
+        const count=DB.resale.filter(r=>r.month===thisMonth).length;
+        const countLast=DB.resale.filter(r=>r.month===lastMonth).length;
+        if(count>0)return `There are <strong style="color:var(--g)">${count.toLocaleString()}</strong> resale transactions recorded for this month (${thisMonth}), sir. Last month had <strong>${countLast.toLocaleString()}</strong> for reference.`;
+        return `I don't have transactions recorded for ${thisMonth} yet, sir — the dataset may not have updated. Last month (${lastMonth}) had <strong style="color:var(--g)">${countLast.toLocaleString()}</strong> transactions.`;
+      }
+      // Total all time
+      if(/total.*(transaction|record|sale|sold)|how many.*(transaction|record|flat|sale|sold).*(total|overall|all time|database|data)/i.test(raw)){
+        return `In total, I have <strong style="color:var(--g)">${DB.resale.length.toLocaleString()}</strong> HDB resale transactions in my database, sir — covering all towns and flat types across the available dataset period.`;
+      }
+      // Most expensive town / cheapest town
+      if(/most expensive town|highest.*(price|priced) town|priciest town/i.test(raw)){
+        const townAvg={};
+        DB.resale.forEach(r=>{const p=Number(r.resale_price);if(r.town&&p>0){townAvg[r.town]=(townAvg[r.town]||[]);townAvg[r.town].push(p);}});
+        const ranked=Object.entries(townAvg).map(([t,ps])=>({t,avg:ps.reduce((a,b)=>a+b,0)/ps.length})).sort((a,b)=>b.avg-a.avg);
+        if(ranked.length)return `The most expensive town by average resale price is <strong style="color:var(--g)">${ranked[0].t}</strong> at ${fmtP(Math.round(ranked[0].avg))}, sir. Followed by ${ranked[1]?.t||'—'} at ${fmtP(Math.round(ranked[1]?.avg||0))}.`;
+      }
+      if(/cheapest town|most affordable town|lowest.*(price|priced) town/i.test(raw)){
+        const townAvg={};
+        DB.resale.forEach(r=>{const p=Number(r.resale_price);if(r.town&&p>0){townAvg[r.town]=(townAvg[r.town]||[]);townAvg[r.town].push(p);}});
+        const ranked=Object.entries(townAvg).map(([t,ps])=>({t,avg:ps.reduce((a,b)=>a+b,0)/ps.length})).sort((a,b)=>a.avg-b.avg);
+        if(ranked.length)return `The most affordable town by average resale price is <strong style="color:var(--g)">${ranked[0].t}</strong> at ${fmtP(Math.round(ranked[0].avg))}, sir. Followed by ${ranked[1]?.t||'—'} at ${fmtP(Math.round(ranked[1]?.avg||0))}.`;
+      }
+      // Average price overall
+      if(/average.*(price|resale|flat)|overall average|mean price/i.test(raw)&&!/town|street|block/i.test(raw)){
+        const prices=DB.resale.map(r=>Number(r.resale_price)).filter(p=>p>0);
+        if(prices.length){const avg=Math.round(prices.reduce((a,b)=>a+b,0)/prices.length);return `The overall average resale price across all transactions in my database is <strong style="color:var(--g)">${fmtP(avg)}</strong>, sir.`;}
+      }
+      return null;
+    },
     isPraise(raw){
       const s=raw.toLowerCase().replace(/[^a-z0-9 ']/g,' ');
       const words=s.split(/\s+/).filter(w=>w.length>0);
@@ -2827,7 +2948,6 @@ const harveyKnows=(()=>{
       const trigrams=[];
       for(let i=0;i<words.length-2;i++)trigrams.push(words[i]+' '+words[i+1]+' '+words[i+2]);
       const all=[...words,...bigrams,...trigrams];
-
       let hostile=false,sarcastic=false,hasHDBContent=false;
       for(const t of all){
         if(HOSTILE.has(t))hostile=true;
@@ -2848,7 +2968,6 @@ const harveyKnows=(()=>{
       return null;
     },
     quip(raw,topic){
-      // Pick a random quip template
       const fn=QUIPS[Math.floor(Math.random()*QUIPS.length)];
       return fn(topic,raw);
     }
