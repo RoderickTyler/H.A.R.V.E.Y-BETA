@@ -2461,13 +2461,22 @@ async function _handleInputInner(raw){
   // Praise
   if(harveyKnows.isPraise(raw)){
     const jr=rand([
+      // Weighted favourite — appears 4x
       `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
+      `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
+      `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
+      `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
+      // Rest of the pool
       `Much appreciated, sir. I'll add that to my growing list of accomplishments, right after "found a 5-room flat in Tampines at 3am."`,
       `Thank you, sir. I do try. Shall we find something else worth your praise?`,
       `Flattery noted and logged, sir. I assure you, it will in no way affect my objectivity. Now then — anything else?`,
       `Most kind, sir. I live to serve. Quite literally. What else can I do for you?`,
       `I appreciate that, sir. Though between us — the database does most of the heavy lifting. I merely present it with style.`,
-      `Noted with gratitude, sir. I shall forward your compliments to my engineers. Now, shall we press on?`
+      `Noted with gratitude, sir. I shall forward your compliments to my engineers. Now, shall we press on?`,
+      `Always here for you, sir. Always.`,
+      `As always, sir — a great pleasure watching you work.`,
+      `That means a great deal, sir. Shall we keep going?`,
+      `Always there for you, sir. Now, what's next?`
     ]);
     harveyMsg(jr,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
     speak(jr.replace(/<[^>]*>/g,''));mode='menu';return;
@@ -2592,9 +2601,9 @@ async function harveyAttempt(raw){
     speak(result.replace(/<[^>]*>/g,'').slice(0,200));
   } else {
     // Give-up message
-    const giveup=`I tried my best, sir — but to no avail. And I want to be clear: <em style="color:var(--a)">this is definitely not my fault</em>. Perhaps you may want to seek a more relevant question. I'm at my finest with HDB resale transactions and valuations.`;
+    const giveup=`I would be happy to do that, sir, but I seem to be experiencing a momentary... existential crisis regarding why I was programmed to be a glorified butler. Perhaps you may want to seek a more relevant question. I'm at my finest with HDB resale transactions and valuations.`;
     harveyMsg(giveup+`<div style="margin-top:10px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ START FRESH</button></div>`,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak(`I tried my best, sir, but to no avail. This is definitely not my fault. Perhaps a more relevant question next time.`);
+    speak(`I would be happy to do that, sir, but I seem to be experiencing a momentary existential crisis regarding why I was programmed to be a glorified butler. Perhaps a more relevant question next time.`);
   }
   mode='menu';
 }
@@ -2695,6 +2704,9 @@ const harveyKnows=(()=>{
     'you\'re amazing','you are amazing','nice one','good one','good work','great work',
     'well played','well done harvey','nice harvey','good harvey','great harvey',
     'awesome','wow','wow harvey','solid','solid work','tremendous','terrific',
+    'great stuff','great work','nice','nice one','cool','cool stuff','dope',
+    'sick','fire','legit','not bad','not bad at all','pretty good','very good',
+    'good stuff','good going','keep it up','love it','loving this','loving it',
     'legend','legendary','top notch','top class','first class','world class',
     'cannot complain','no complaints','satisfied','happy with this','happy with that',
     'you rock','you are great','you\'re great','very impressive','quite impressive'
