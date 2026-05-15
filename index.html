@@ -50,6 +50,9 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 /* Stop speech button */
 .stop-btn{font-family:var(--mono);font-size:8px;color:var(--r);background:rgba(255,68,68,.06);border:1px solid rgba(255,68,68,.2);padding:3px 8px;cursor:pointer;letter-spacing:1px;transition:all .14s;white-space:nowrap;flex-shrink:0}
 .stop-btn:hover{background:rgba(255,68,68,.15);border-color:var(--r)}
+/* Restart button */
+.restart-btn{font-family:var(--mono);font-size:8px;color:var(--a);background:rgba(255,170,0,.06);border:1px solid rgba(255,170,0,.2);padding:5px 10px;cursor:pointer;letter-spacing:1px;clip-path:polygon(5px 0,100% 0,100% 100%,0 100%,0 5px);transition:all .14s;white-space:nowrap;flex-shrink:0}
+.restart-btn:hover{background:rgba(255,170,0,.15);border-color:var(--a);box-shadow:0 0 10px rgba(255,170,0,.15)}
 /* Sortable table headers */
 .sort-th{cursor:pointer;user-select:none;white-space:nowrap}
 .sort-th:hover{color:var(--c) !important}
@@ -265,7 +268,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .messages{-webkit-overflow-scrolling:touch;overflow-y:auto !important}
   .side.mob-visible{-webkit-overflow-scrolling:touch;overflow-y:auto}
   /* ALL tappable elements — critical for iOS Safari */
-  button,.chip,.mob-tab,.trow,.ritem,.hud-submit,.stop-btn,.vtog,.sbtn,.mbtn,a,select,label{
+  button,.chip,.mob-tab,.trow,.ritem,.hud-submit,.stop-btn,.vtog,.sbtn,.mbtn,.restart-btn,a,select,label{
     -webkit-tap-highlight-color:rgba(0,212,255,0.15);
     touch-action:manipulation;
   }
@@ -279,7 +282,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .mob-nav{padding-bottom:env(safe-area-inset-bottom,0px)}
   .main{padding-bottom:calc(60px + env(safe-area-inset-bottom,0px))}
   /* Remove clip-path — blocks touch in iOS Safari */
-  .irow,.sbtn,.mbtn,.chip,.hud-submit,.stop-btn,.vtog{clip-path:none !important}
+  .irow,.sbtn,.mbtn,.chip,.hud-submit,.stop-btn,.vtog,.restart-btn{clip-path:none !important}
   /* Minimum tap target size */
   .mob-tab{min-height:48px;min-width:44px}
 
@@ -346,6 +349,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
       <div><span class="lname">BLOCKSENSE</span><span class="lsub">HARVEY · HDB ANALYTICS & RESEARCH VALUATION ENGINE FOR YOU</span></div>
     </div>
     <div class="tb-right" id="tb-right">
+      <button class="restart-btn" onclick="chipClick('__restart__')" title="Restart conversation">↺ RESTART</button>
       <div><div class="tb-time" id="clk">--:--:--</div><div class="tb-date" id="dt">---</div></div>
       <div class="live-pill"><div class="ldot"></div>LIVE · FREE</div>
     </div>
@@ -1160,7 +1164,8 @@ function buildMissingPrompt(ctx){
   if(!ctx.flatType)m.push('🏠 <strong>Flat type</strong> — 3-room, 4-room, 5-room or Executive');
   if(!ctx.street)  m.push('🛣️ <strong>Street name</strong> — e.g. Clementi West Street 1');
   if(!ctx.block)   m.push('🔢 <strong>Block number</strong> — e.g. Blk 608');
-  if(!ctx.floor)   m.push('📶 <strong>Floor level</strong> — e.g. floor 4');
+  // Floor is optional — will use median floor if not provided
+  if(!ctx.floor)   m.push('📶 <strong>Floor level</strong> — e.g. floor 4 <em>(optional — I\'ll use a mid-floor estimate)</em>');
   if(!ctx.size&&!ctx.flatType)m.push('📐 <strong>Floor area sqm</strong> — e.g. 67 sqm <em>(optional if flat type given)</em>');
   return m;
 }
@@ -1558,7 +1563,18 @@ function showEV(result,params){
   const compsData=result.compsData||[];
   const warn12=result.lookbackUsed===12;
   const sizeNote=params.sizeFromDB?` <em style="color:var(--g)">(from block records)</em>`:params.sizeInferred?` <em style="color:var(--a)">(estimated)</em>`:'';
+  const floorNote=params.floorInferred?` <em style="color:var(--a)">(estimated mid-floor)</em>`:'';
   const fallNote=result.fallbackLevel==='street'?` · street-level comps`:'';
+
+  // Size/floor disclaimer banners
+  const sizeDisclaimer=params.sizeInferred?`<div class="ev-warn" style="margin-bottom:10px">
+    ⚠ <strong>You have not provided an accurate unit size.</strong> I've used the typical floor area for a <strong>${esc(result.flatType)}</strong> (${result.size}sqm) as a reference. The actual value may differ if your unit in this vicinity has a different size or built specifications for the same flat type.<br><br>
+    For a more accurate valuation based on your unit's exact floor area, feel free to reach out: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>
+  </div>`:'';
+  const floorDisclaimer=params.floorInferred?`<div class="ev-warn" style="margin-bottom:10px;border-color:rgba(255,170,0,.25)">
+    ⚠ <strong>No floor level was provided.</strong> I've estimated using a mid-floor level (floor ${result.floor}) for this block. Floor premium adjustments may not reflect your unit's actual position. Providing your floor gives a more precise estimate.<br><br>
+    For a more grounded assessment: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>
+  </div>`:'';
 
   // Detect floor inversion: any lower-floor comp priced HIGHER than a higher-floor comp
   let inversionNote='';
@@ -1611,9 +1627,11 @@ function showEV(result,params){
 
   <div class="ev-card">
     ${warn12?`<div class="ev-warn">⚠ Based on last 12 months — not enough recent data. Treat as directional.<br><a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat for a more accurate valuation →</a></div>`:''}
+    ${sizeDisclaimer}
+    ${floorDisclaimer}
 
     <div style="font-family:var(--mono);font-size:9px;color:var(--t2);letter-spacing:1px;margin-bottom:12px">
-      ${esc(result.flatType)} · FLOOR ${result.floor} · ${result.size}SQM${sizeNote} · ${esc(result.town)}${fallNote}
+      ${esc(result.flatType)} · FLOOR ${result.floor}${floorNote} · ${result.size}SQM${sizeNote} · ${esc(result.town)}${fallNote}
     </div>
 
     <!-- Lead: adjusted estimate big and centred -->
@@ -1691,7 +1709,7 @@ function showEV(result,params){
       {label:'⚙ CHANGE DETAILS',val:'__changedetails__'},
       {label:'ESTIMATE ANOTHER',val:'estimate value'}
     ];
-    harveyMsg(`That covers everything I have, sir. Should you need a more grounded assessment, do reach out — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.<br><br>${detailsSummary}`,chips);
+    harveyMsg(`That covers everything I have, sir. Should you need a more grounded assessment, do reach out — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.${ctx.sizeInferred?'<br><br><span style="font-family:var(--mono);font-size:9px;color:var(--a)">⚠ You have not provided an accurate unit size and as such the value may differ if your vicinity has a different size and built of the same flat type. Here\'s a contact you can reach out for a more detailed pricing and valuation: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us →</a></span>':''}${ctx.floorInferred?'<br><span style="font-family:var(--mono);font-size:9px;color:var(--a)">⚠ No floor level was provided — estimate used a mid-floor reference. For floor-specific pricing, <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">reach out to us on WhatsApp →</a></span>':''}<br><br>${detailsSummary}`,chips);
     speak(`That covers all the transactions I have, sir. Do WhatsApp us if you need a more grounded assessment.`);
   },1800);
   mode='menu';
@@ -1979,6 +1997,16 @@ async function runEV(){
   enrichCtx(ctx);
   if(!ctx.size&&ctx.block&&ctx.flatType){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}}
   if(!ctx.size&&ctx.flatType){ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}
+  // Floor is optional — if not provided, use a typical mid-floor for the flat type
+  if(!ctx.floor){
+    // Try to get median floor from actual DB records for this block/flat type
+    const storeys=getFloorsForBlock(ctx.block,ctx.street,ctx.flatType);
+    if(storeys.length){
+      const mid=storeys[Math.floor(storeys.length/2)];
+      ctx.floor=typeof mid==='number'?mid:parseInt(mid)||6;
+    }else{ctx.floor=6;}
+    ctx.floorInferred=true;
+  }
   speak(rand(['Stand by, sir.','Computing estimate, sir.','Accessing records, sir.']));
   thinkingMsg();await new Promise(r=>setTimeout(r,300));
   const result=computeEstimate(ctx);rmThinking();showEV(result,ctx);
@@ -2098,9 +2126,16 @@ async function handleInput(){
 
   // ── Restart chip ──
   if(raw==='__restart__'){
-    userMsg('Start over');ctx={};mode='menu';
-    harveyMsg('Of course, sir. Starting fresh — what would you like to do?',[{label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]);
-    speak('Starting fresh, sir.');loading=false;sbEl.disabled=false;return;
+    userMsg('Start over');
+    ctx={};mode='menu';
+    // Clear inferred flags
+    stopSpeech();
+    harveyMsg(`Of course, sir. Starting fresh — what would you like to do?`,[
+      {label:'ESTIMATE VALUE',val:'estimate value'},
+      {label:'SEARCH TRANSACTIONS',val:'search'}
+    ]);
+    speak('Starting fresh, sir. What would you like to do?');
+    loading=false;sbEl.disabled=false;return;
   }
 
   // ── Search form chip ──
@@ -2232,7 +2267,8 @@ async function handleInput(){
     enrichCtx(ctx);
     if(ctx.flatType&&!ctx.size){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}else{ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}}
     if(mode==='ev_waiting'){
-      const still=buildMissingPrompt(ctx).filter(s=>!s.includes('optional')&&!s.includes('I can find'));
+      // Floor and size are optional; only block+flatType are hard required for EV
+      const still=buildMissingPrompt(ctx).filter(s=>!s.includes('optional')&&!s.includes('I can find')&&!s.includes('mid-floor'));
       if(still.length>0){harveyMsg(`Still need a couple more, sir:<br><br>${still.join('<br>')}`);speak('Still a couple more details, sir.');loading=false;sbEl.disabled=false;return;}
       await runEV();
     }else{await runSearch();}
@@ -2402,9 +2438,9 @@ async function handleInput(){
   if(ctx.isEV||/valuat|estimate|worth|value|how much|price of|check value/i.test(raw)){
     ctx.isEV=true;
     if(!ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.floor){
-      harveyMsg(`Of course, sir. Please go ahead and input your <strong>block number</strong>, <strong>street</strong>, the <strong>unit's level</strong> and the <strong>flat type</strong>. Something like:<br><br>
-<em style="color:var(--c);font-family:var(--mono);font-size:11px">608 Clementi West Street 1 level 4 3 room</em><br><br>
-<em style="color:var(--t2);font-size:11px">You can also include the <strong>lease year</strong> for better accuracy — e.g. <strong style="color:var(--c)">lease 1979</strong>. Floor area is optional — I'll look it up from the records.</em>`,flatTypeChips());
+      harveyMsg(`Of course, sir. Please go ahead and input your <strong>block number</strong>, <strong>street</strong>, and the <strong>flat type</strong>. Something like:<br><br>
+<em style="color:var(--c);font-family:var(--mono);font-size:11px">608 Clementi West Street 1 4 room</em><br><br>
+<em style="color:var(--t2);font-size:11px">You can also include the <strong>floor level</strong> for better floor-premium accuracy — e.g. <strong style="color:var(--c)">level 4</strong>. Floor area and lease year are also optional — I'll estimate them from the records if not provided.</em>`,flatTypeChips());
       speak('Of course, sir. Please go ahead and input your block number, street, the unit level — that is the floor — and the flat type.');
       mode='ev_waiting';loading=false;sbEl.disabled=false;return;
     }
@@ -2424,6 +2460,20 @@ async function handleInput(){
       const reply=rand(replies);
       harveyMsg(reply,[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
       speak(`I'm afraid the data and numbers present themselves as such, sir. The estimate reflects actual recorded transactions. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
+      loading=false;sbEl.disabled=false;return;
+    }
+    // ── Out-of-scope question detection ──
+    // If the input looks like a question about something unrelated to HDB resale/valuation
+    const isOutOfScope=/\b(how do i|how to|what is|what are|can you|do you|tell me about|explain|advice|should i|legal|loan|cpf|mortgage|stamp duty|grant|bto|rental|rent|agent fee|commission|property tax|renovation|insurance|fire sale|en bloc|hdb eligibility|mop|minimum occupation|foreigner|pr status|ownership|transfer|decoupling|lawyer|conveyancing|irs|income tax|investment|financial|bank|interest rate|afford|calculator|school|school bus|nearby|mrt|bus|transport|hawker|mall|food|park|gym|pool|amenities|noise|neighbour|feedback|complaint|repair|defect|town council|hdb portal|my hdb|singpass|form|application|register|book|hle|hdb loan|bank loan|downpayment|cash over valuation|cov)\b/i.test(raw);
+    const looksLikeQuestion=/\?|^(what|who|when|where|why|how|is there|are there|can i|should i|do i need|will|would|could|does|did)\b/i.test(raw.trim());
+    if((isOutOfScope||(looksLikeQuestion&&!parsed.town&&!parsed.flatType&&!parsed.street&&!parsed.block&&!parsed.floor&&!parsed.size))&&!isReaction){
+      const outOfScopeReplies=[
+        `I'm afraid that's a little beyond my capabilities, sir — I'm best equipped for HDB resale transactions and valuations. For that question, you'd really be better served by a professional agent who can advise you properly. Would you like to speak to one? <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+        `That's outside my scope, I'm afraid, sir — I'm a resale data and valuation engine, not a general property advisor. I wouldn't want to steer you wrong on that. A licensed agent would be far better placed to help. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Feel free to WhatsApp us for clarity →</a>`,
+        `Apologies, sir — that's a bit beyond what I'm built for. My expertise is HDB resale transaction data and estimated values. For your question, I'd recommend speaking to a professional. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here and we'd be happy to assist →</a>`
+      ];
+      harveyMsg(rand(outOfScopeReplies),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+      speak(`I'm afraid that's a little beyond my capabilities, sir. For that question, you'd be better served by a professional agent. Feel free to WhatsApp us for clarity.`);
       loading=false;sbEl.disabled=false;return;
     }
     harveyMsg('How can I help, sir?',[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
