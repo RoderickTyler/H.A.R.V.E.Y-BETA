@@ -619,6 +619,45 @@ const DB = { resale:[], townStreets:{}, loaded:false };
 let loading=false, qn=0, voiceOn=true;
 let mode='boot', ctx={};
 
+// ── CONVERSATION MEMORY — persists across turns until __restart__ ──
+// Stores the last known HDB context so follow-up messages inherit it.
+// e.g. user searches "hougang 3 room" → convCtx={town:'HOUGANG',flatType:'3 ROOM'}
+//      user then types "ave 6" → Harvey merges into convCtx and searches hougang ave 6 3 room
+//      user then types "level 8" → Harvey searches hougang ave 6 3 room level 8
+let convCtx={};
+function mergeToConvCtx(parsed){
+  // Only store fields that have real values — never overwrite with empty
+  if(parsed.town)     convCtx.town=parsed.town;
+  if(parsed.flatType) convCtx.flatType=parsed.flatType;
+  if(parsed.street)   convCtx.street=parsed.street;
+  if(parsed.block)    convCtx.block=parsed.block;
+  if(parsed.floor)    convCtx.floor=parsed.floor;
+  if(parsed.size)     convCtx.size=parsed.size;
+  if(parsed.leaseYear)convCtx.leaseYear=parsed.leaseYear;
+  if(parsed.maxPrice) convCtx.maxPrice=parsed.maxPrice;
+  if(parsed.minPrice) convCtx.minPrice=parsed.minPrice;
+  if(parsed.isEV!==undefined) convCtx.isEV=parsed.isEV;
+}
+function applyConvCtx(parsed){
+  // Fill in blanks from conversation memory — never overwrite what the user just said
+  const merged={...convCtx};
+  if(parsed.town)     merged.town=parsed.town;
+  if(parsed.flatType) merged.flatType=parsed.flatType;
+  if(parsed.street)   merged.street=parsed.street;
+  if(parsed.block)    merged.block=parsed.block;
+  if(parsed.floor!==undefined&&parsed.floor) merged.floor=parsed.floor;
+  if(parsed.size)     merged.size=parsed.size;
+  if(parsed.leaseYear)merged.leaseYear=parsed.leaseYear;
+  if(parsed.maxPrice) merged.maxPrice=parsed.maxPrice;
+  if(parsed.minPrice) merged.minPrice=parsed.minPrice;
+  if(parsed.isEV!==undefined) merged.isEV=parsed.isEV;
+  // If user narrows scope (changes flatType/street/town), clear downstream ctx
+  if(parsed.town&&parsed.town!==convCtx.town){merged.street='';merged.block='';}
+  if(parsed.street&&parsed.street!==convCtx.street){merged.block='';}
+  if(parsed.flatType&&parsed.flatType!==convCtx.flatType){merged.block='';}
+  return merged;
+}
+
 const msgsEl = document.getElementById('msgs');
 const ciEl   = document.getElementById('ci');
 const sbEl   = document.getElementById('sb');
@@ -2126,37 +2165,58 @@ async function handleInput(){
   ciEl.value='';ciEl.style.height='auto';
   resetIdle();
 
-  // ── Restart chip ──
+  // ── FINAL SAFETY GATE — guaranteed unlock on any exit path ──
+  try{
+    await _handleInputInner(raw);
+  }catch(e){
+    console.warn('Harvey error:',e);
+    harveyMsg(`I seem to have encountered an unexpected issue, sir. My apologies. Do try again — or reset if needed.`+
+      `<div style="margin-top:8px"><button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="chipClick('__restart__')">↺ RESET HARVEY</button></div>`,
+      [{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    mode='menu';
+  }finally{
+    loading=false;sbEl.disabled=false;
+  }
+}
+
+async function _handleInputInner(raw){
+
+  // ── Restart ──
   if(raw==='__restart__'){
     userMsg('Start over');
-    ctx={};mode='menu';
-    // Clear inferred flags
+    ctx={};convCtx={};mode='menu';
     stopSpeech();
     harveyMsg(`Of course, sir. Starting fresh — what would you like to do?`,[
       {label:'ESTIMATE VALUE',val:'estimate value'},
       {label:'SEARCH TRANSACTIONS',val:'search'}
     ]);
     speak('Starting fresh, sir. What would you like to do?');
-    loading=false;sbEl.disabled=false;return;
+    return;
   }
 
   // ── Search form chip ──
   if(raw==='__searchform__'){
     userMsg('Refine search');
     harveyMsg('Refine your search, sir:<br><br>'+buildSearchForm(ctx),[{label:'🔄 START OVER',val:'__restart__'}]);
-    speak('Here are the search options, sir.');loading=false;sbEl.disabled=false;return;
+    speak('Here are the search options, sir.');return;
   }
 
   userMsg(raw);
-  if(!DB.loaded){harveyMsg('Still loading data, sir. One moment...');loading=false;sbEl.disabled=false;return;}
+  if(!DB.loaded){harveyMsg('Still loading data, sir. One moment...');return;}
+
   const parsed=parseQuery(normalizeSpeech(raw));
+
+  // ── Merge into conversation memory ──
+  // Apply existing conv memory to parsed, then update convCtx with new info
+  const ctxWithMemory=applyConvCtx(parsed);
+  mergeToConvCtx(parsed);
 
   // ── Confirmation mode after no-data ──
   if(mode==='ev_confirm'){
-    if(raw==='__restart__'||/start.?over|restart|fresh|new.?query/i.test(raw)){
-      ctx={};mode='menu';
+    if(/start.?over|restart|fresh|new.?query/i.test(raw)){
+      ctx={};convCtx={};mode='menu';
       harveyMsg('Of course, sir. Starting fresh — what would you like to do?',[{label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]);
-      speak('Starting fresh, sir.');loading=false;sbEl.disabled=false;return;
+      speak('Starting fresh, sir.');return;
     }
     if(/^correct(\s+retry)?$|^yes$|^same$|^retry$|^looks\s*(good|right|ok)$/i.test(raw.trim())){
       mode='ev_waiting';await runEV();return;
@@ -2174,120 +2234,81 @@ async function handleInput(){
     mode='ev_waiting';await runEV();return;
   }
 
-  // ── Waiting modes — absorb all new info ──
+  // ── Waiting modes — absorb new info, keep conv memory ──
   if(mode==='ev_waiting'||mode==='srch_waiting'){
-    // Check if user is reacting to a previous result rather than giving new info
     const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
     const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice;
 
-    // ── Mid-conversation hostility check ──
     const midSent=harveyKnows.sentiment(raw);
     if(midSent.hostile&&!hasNewInfo){
-      // Pure hostility — no new info — apologise graciously then stay in current flow
-      const gracious=rand([
-        `My sincerest apologies, sir — I clearly haven't been as helpful as you needed. I do mean well. Whenever you're ready, I'm still here to assist with your HDB query.`,
-        `I'm sorry to have caused frustration, sir. That was not my intention at all. Please do let me know what you need and I'll do my very best.`,
-        `Noted, sir, and I apologise unreservedly. Let's start fresh — what would you like to know?`
-      ]);
-      harveyMsg(gracious,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'},{label:'↺ START OVER',val:'__restart__'}]);
-      speak(`My sincerest apologies, sir. I clearly haven't been as helpful as you needed. Whenever you're ready, I'm still here.`);
-      loading=false;sbEl.disabled=false;return;
+      harveyMsg(rand([
+        `My sincerest apologies, sir — I clearly haven't been as helpful as you needed. I do mean well. Whenever you're ready, I'm still here.`,
+        `I'm sorry to have caused frustration, sir. That was not my intention at all. Please do let me know what you need.`,
+        `Noted, sir, and I apologise unreservedly. Let's try again — what would you like to know?`
+      ]),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'},{label:'↺ START OVER',val:'__restart__'}]);
+      speak(`My sincerest apologies, sir. Whenever you're ready, I'm still here.`);return;
     }
     if(midSent.hostile&&hasNewInfo){
-      // Hostility BUT there's real info in there — apologise briefly, then process
-      const apology=rand([
-        `My apologies, sir — allow me to address that for you:`,
-        `I'm sorry you feel that way, sir. Let me assist with what I can:`,
-        `Duly noted, and my apologies. Here's what I have:`
-      ]);
-      harveyMsg(apology);
+      harveyMsg(rand([`My apologies, sir — allow me to assist:`,`I'm sorry you feel that way, sir. Here's what I have:`,`Duly noted. My apologies, sir:`]));
       speak(`My apologies, sir. Allow me to assist.`);
       await new Promise(r=>setTimeout(r,500));
     }
 
     if(isReaction&&!hasNewInfo){
-      const replies=[
-        `I'm afraid the data and numbers present themselves as such, sir. The estimate is based on actual resale transactions — I can only work with what the market has transacted. For a more grounded view, you may want a professional agent for the on-the-ground sensing. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
-        `The numbers are what they are, sir — I'm merely reflecting the recorded transactions. If it feels off, a professional agent would give you a fuller picture. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Do reach out to us on WhatsApp</a>.`,
-        `I understand, sir — but I'm afraid the data presents itself as such. Market conditions on the ground can differ. Feel free to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">chat with us on WhatsApp</a> for a more personal assessment.`
-      ];
-      harveyMsg(rand(replies),[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
-      speak(`I'm afraid the data presents itself as such, sir. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
-      loading=false;sbEl.disabled=false;return;
+      harveyMsg(rand([
+        `I'm afraid the data presents itself as such, sir. The estimate reflects actual recorded transactions. A professional agent may give you a fuller picture — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
+        `The numbers are what they are, sir — I'm merely reflecting recorded transactions. Feel free to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">reach out on WhatsApp</a> for a more personal assessment.`,
+        `I understand, sir — but the data presents itself as such. Market conditions on the ground can differ. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat with us on WhatsApp</a> for a grounded view.`
+      ]),[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
+      speak(`I'm afraid the data presents itself as such, sir.`);return;
     }
 
-    // ── Context-aware fallback: figure out what was being asked and map raw input ──
-    // Determine the FIRST missing field in current ctx to know what user is answering
-    const missingFields=[];
-    if(!ctx.block)    missingFields.push('block');
-    if(!ctx.street)   missingFields.push('street');
-    if(!ctx.floor)    missingFields.push('floor');
-    if(!ctx.flatType) missingFields.push('flatType');
-    if(!ctx.size&&!ctx.flatType) missingFields.push('size');
-    if(!ctx.leaseYear)missingFields.push('leaseYear');
-    const nextMissing=missingFields[0]; // what Harvey was most likely asking about
-
-    // If parser found nothing at all, try to infer from context
+    // Context-aware bare number/year parsing
     if(!hasNewInfo){
-      const numOnly=raw.trim().match(/^(\d{1,4}[A-Z]?)$/i); // bare number e.g. "158" or "4A"
-      const yearOnly=raw.trim().match(/^(19|20)\d{2}$/);    // bare year e.g. "1979"
+      const numOnly=raw.trim().match(/^(\d{1,4}[A-Z]?)$/i);
+      const yearOnly=raw.trim().match(/^(19|20)\d{2}$/);
+      const missingFields=[];
+      if(!ctx.block) missingFields.push('block');
+      if(!ctx.street) missingFields.push('street');
+      if(!ctx.floor) missingFields.push('floor');
+      if(!ctx.flatType) missingFields.push('flatType');
+      if(!ctx.size&&!ctx.flatType) missingFields.push('size');
+      if(!ctx.leaseYear) missingFields.push('leaseYear');
+      const nextMissing=missingFields[0];
+
       if(numOnly){
-        const n=numOnly[1].toUpperCase();
-        const nInt=parseInt(n);
-        if(nextMissing==='block'){
-          ctx.block=n;
-          harveyMsg(`Got it — <strong style="color:var(--c)">Block ${n}</strong>, sir.`);
-        } else if(nextMissing==='floor'||(!nextMissing&&nInt>=1&&nInt<=55)){
-          ctx.floor=nInt;
-          harveyMsg(`Got it — <strong style="color:var(--c)">Floor ${nInt}</strong>, sir.`);
-        } else if(nextMissing==='size'||(nInt>=30&&nInt<=200)){
-          ctx.size=nInt;ctx.sizeInferred=false;ctx.sizeFromDB=false;
-          harveyMsg(`Got it — <strong style="color:var(--c)">${nInt} sqm</strong>, sir.`);
-        } else if(nextMissing==='leaseYear'||(nInt>=1960&&nInt<=2010)){
-          ctx.leaseYear=nInt;
-          harveyMsg(`Got it — <strong style="color:var(--c)">Lease ${nInt}</strong>, sir.`);
-        } else {
-          // Ambiguous number — tell user what to prefix
-          const hint=nextMissing==='block'?`Try <strong style="color:var(--c)">block ${n}</strong>`
-            :nextMissing==='floor'?`Try <strong style="color:var(--c)">floor ${n}</strong>`
-            :nextMissing==='size'?`Try <strong style="color:var(--c)">${n} sqm</strong>`
-            :nextMissing==='leaseYear'?`Try <strong style="color:var(--c)">lease ${n}</strong>`
-            :`Try prefixing it — e.g. <strong style="color:var(--c)">block ${n}</strong> or <strong style="color:var(--c)">floor ${n}</strong>`;
+        const n=numOnly[1].toUpperCase();const nInt=parseInt(n);
+        if(nextMissing==='block'){ctx.block=n;convCtx.block=n;harveyMsg(`Got it — <strong style="color:var(--c)">Block ${n}</strong>, sir.`);}
+        else if(nextMissing==='floor'||(!nextMissing&&nInt>=1&&nInt<=55)){ctx.floor=nInt;convCtx.floor=nInt;harveyMsg(`Got it — <strong style="color:var(--c)">Floor ${nInt}</strong>, sir.`);}
+        else if(nextMissing==='size'||(nInt>=30&&nInt<=200)){ctx.size=nInt;convCtx.size=nInt;ctx.sizeInferred=false;ctx.sizeFromDB=false;harveyMsg(`Got it — <strong style="color:var(--c)">${nInt} sqm</strong>, sir.`);}
+        else if(nextMissing==='leaseYear'||(nInt>=1960&&nInt<=2010)){ctx.leaseYear=nInt;convCtx.leaseYear=nInt;harveyMsg(`Got it — <strong style="color:var(--c)">Lease ${nInt}</strong>, sir.`);}
+        else{
+          const hint=nextMissing==='block'?`Try <strong style="color:var(--c)">block ${n}</strong>`:nextMissing==='floor'?`Try <strong style="color:var(--c)">floor ${n}</strong>`:nextMissing==='size'?`Try <strong style="color:var(--c)">${n} sqm</strong>`:nextMissing==='leaseYear'?`Try <strong style="color:var(--c)">lease ${n}</strong>`:`Try prefixing it — e.g. <strong style="color:var(--c)">block ${n}</strong> or <strong style="color:var(--c)">floor ${n}</strong>`;
           harveyMsg(`I couldn't quite place <strong>${esc(raw)}</strong>, sir. ${hint} so I know which field it belongs to.`);
-          speak(`I couldn't place that, sir. Could you try prefixing it — for example, ${nextMissing||'block'} ${n}?`);
-          loading=false;sbEl.disabled=false;return;
+          speak(`I couldn't place that, sir. Could you try prefixing it?`);return;
         }
-      } else if(yearOnly){
-        ctx.leaseYear=parseInt(yearOnly[1]);
+      }else if(yearOnly){
+        ctx.leaseYear=parseInt(yearOnly[1]);convCtx.leaseYear=ctx.leaseYear;
         harveyMsg(`Got it — <strong style="color:var(--c)">Lease year ${ctx.leaseYear}</strong>, sir.`);
-      } else {
-        // Totally unrecognisable — tell them what's still missing and HOW to format it
-        const fieldName=nextMissing==='block'?'block number'
-          :nextMissing==='floor'?'floor level'
-          :nextMissing==='flatType'?'flat type'
-          :nextMissing==='street'?'street name'
-          :nextMissing==='size'?'floor area in sqm'
-          :nextMissing==='leaseYear'?'lease year'
-          :'details';
-        const example=nextMissing==='block'?'e.g. <strong style="color:var(--c)">block 158</strong>'
-          :nextMissing==='floor'?'e.g. <strong style="color:var(--c)">floor 8</strong>'
-          :nextMissing==='flatType'?'e.g. <strong style="color:var(--c)">4-room</strong>'
-          :nextMissing==='street'?'e.g. <strong style="color:var(--c)">Clementi West St 1</strong>'
-          :nextMissing==='size'?'e.g. <strong style="color:var(--c)">93 sqm</strong>'
-          :nextMissing==='leaseYear'?'e.g. <strong style="color:var(--c)">lease 1979</strong>'
-          :'';
+      }else{
+        const fieldName=nextMissing==='block'?'block number':nextMissing==='floor'?'floor level':nextMissing==='flatType'?'flat type':nextMissing==='street'?'street name':nextMissing==='size'?'floor area in sqm':nextMissing==='leaseYear'?'lease year':'details';
+        const example=nextMissing==='block'?'e.g. <strong style="color:var(--c)">block 158</strong>':nextMissing==='floor'?'e.g. <strong style="color:var(--c)">floor 8</strong>':nextMissing==='flatType'?'e.g. <strong style="color:var(--c)">4-room</strong>':nextMissing==='street'?'e.g. <strong style="color:var(--c)">Hougang Ave 6</strong>':nextMissing==='size'?'e.g. <strong style="color:var(--c)">93 sqm</strong>':nextMissing==='leaseYear'?'e.g. <strong style="color:var(--c)">lease 1979</strong>':'';
         harveyMsg(`I couldn't find the ${fieldName} from that, sir — ${example}.`);
-        speak(`I couldn't find the ${fieldName} from that, sir.`);
-        loading=false;sbEl.disabled=false;return;
+        speak(`I couldn't find the ${fieldName} from that, sir.`);return;
       }
     }
 
-    // Merge parsed fields normally
+    // Merge parsed fields — use memory-enriched values
     if(parsed.town)     ctx.town=parsed.town;
+    else if(convCtx.town&&!ctx.town) ctx.town=convCtx.town;
     if(parsed.flatType) ctx.flatType=parsed.flatType;
+    else if(convCtx.flatType&&!ctx.flatType) ctx.flatType=convCtx.flatType;
     if(parsed.street)   ctx.street=parsed.street;
+    else if(convCtx.street&&!ctx.street) ctx.street=convCtx.street;
     if(parsed.block)    ctx.block=parsed.block;
+    else if(convCtx.block&&!ctx.block) ctx.block=convCtx.block;
     if(parsed.floor)    ctx.floor=parsed.floor;
+    else if(convCtx.floor&&!ctx.floor) ctx.floor=convCtx.floor;
     if(parsed.size){    ctx.size=parsed.size;ctx.sizeInferred=false;ctx.sizeFromDB=false;}
     if(parsed.leaseYear)ctx.leaseYear=parsed.leaseYear;
     if(parsed.maxPrice) ctx.maxPrice=parsed.maxPrice;
@@ -2295,56 +2316,45 @@ async function handleInput(){
     enrichCtx(ctx);
     if(ctx.flatType&&!ctx.size){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}else{ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}}
     if(mode==='ev_waiting'){
-      // Floor and size are optional; only block+flatType are hard required for EV
       const still=buildMissingPrompt(ctx).filter(s=>!s.includes('optional')&&!s.includes('I can find')&&!s.includes('mid-floor'));
-      if(still.length>0){harveyMsg(`Still need a couple more, sir:<br><br>${still.join('<br>')}`);speak('Still a couple more details, sir.');loading=false;sbEl.disabled=false;return;}
+      if(still.length>0){harveyMsg(`Still need a couple more, sir:<br><br>${still.join('<br>')}`);speak('Still a couple more details, sir.');return;}
       await runEV();
     }else{await runSearch();}
     return;
   }
 
-  // ── Change details chip — show dropdown silently, no re-ask ──
+  // ── Change details chip ──
   if(raw==='__changedetails__'){
     userMsg('Change details');
-    const formHtml=buildHudForm(ctx);
-    harveyMsg(`Of course, sir. Here are the details used — adjust anything and press Estimate Value to re-run:<br><br>${formHtml}`);
-    speak('Here are the details, sir. Adjust and re-run whenever you are ready.');
-    mode='ev_confirm';loading=false;sbEl.disabled=false;return;
+    harveyMsg(`Of course, sir. Here are the details used — adjust anything and press Estimate Value to re-run:<br><br>${buildHudForm(ctx)}`);
+    speak('Here are the details, sir. Adjust and re-run whenever ready.');
+    mode='ev_confirm';return;
   }
 
-  // ── Special: street-specific queries ──
+  // ── Street-specific chip queries ──
   if(/^recent (flattype .+ all blocks|all blocks) /i.test(raw)){
-    let flatTypeFilter='';
-    let streetName='';
+    let flatTypeFilter='',streetName='';
     const ftMatch=raw.match(/^recent flattype (.+?) all blocks (.+)$/i);
     const allMatch=raw.match(/^recent all blocks (.+)$/i);
     if(ftMatch){flatTypeFilter=ftMatch[1].trim().toUpperCase();streetName=ftMatch[2].trim();}
     else if(allMatch){streetName=allMatch[1].trim();}
-
     const found=reverseStreet(streetName);
     const canonicalStreet=found?found.street:streetName.toUpperCase();
-
     let streetRecs=DB.resale.filter(r=>r.street_name===canonicalStreet);
-    if(flatTypeFilter) streetRecs=streetRecs.filter(r=>r.flat_type===flatTypeFilter);
+    if(flatTypeFilter)streetRecs=streetRecs.filter(r=>r.flat_type===flatTypeFilter);
     streetRecs=streetRecs.sort((a,b)=>(b.month||'').localeCompare(a.month||''));
-
     document.getElementById('welcome')?.remove();
-    const label=flatTypeFilter?`${flatTypeFilter} ON ${canonicalStreet}`:`ALL ON ${canonicalStreet}`;
     userMsg(flatTypeFilter?`${flatTypeFilter} transactions on ${canonicalStreet}`:`All transactions on ${canonicalStreet}`);
-
-    if(!streetRecs.length){
-      harveyMsg(`No ${flatTypeFilter||'transactions'} found on <strong>${esc(canonicalStreet)}</strong>, sir.`);
-      loading=false;sbEl.disabled=false;return;
-    }
+    if(!streetRecs.length){harveyMsg(`No ${flatTypeFilter||'transactions'} found on <strong>${esc(canonicalStreet)}</strong>, sir.`);return;}
     const prices=streetRecs.map(r=>Number(r.resale_price));
     const median=[...prices].sort((a,b)=>a-b)[Math.floor(prices.length/2)];
-  const avg=Math.round(prices.reduce((s,p)=>s+p,0)/prices.length);
+    const avg=Math.round(prices.reduce((s,p)=>s+p,0)/prices.length);
     const rows=streetRecs.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
     const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
-    d.innerHTML=`<span class="mlbl">// ${streetRecs.length} TRANSACTIONS · ${esc(label)}</span>
-      <div class="mbub"><strong>${streetRecs.length}</strong> transaction${streetRecs.length!==1?'s':''} — ${flatTypeFilter?`<strong>${esc(flatTypeFilter)}</strong> on`:'all types on'} <strong>${esc(canonicalStreet)}</strong>, sir.</div>
+    d.innerHTML=`<span class="mlbl">// ${streetRecs.length} TRANSACTIONS · ${esc(flatTypeFilter?`${flatTypeFilter} ON ${canonicalStreet}`:`ALL ON ${canonicalStreet}`)}</span>
+      <div class="mbub"><strong>${streetRecs.length}</strong> transaction${streetRecs.length!==1?'s':''}${flatTypeFilter?` · <strong>${esc(flatTypeFilter)}</strong>`:''} on <strong>${esc(canonicalStreet)}</strong>, sir.</div>
       <div class="rwrap"><div class="rcard">
-        <div class="rh"><span class="rtitle">⬡ ${esc(label)}</span><span class="rcnt">${streetRecs.length} RECORDS · ALL TIME</span></div>
+        <div class="rh"><span class="rtitle">⬡ ${esc(canonicalStreet)}</span><span class="rcnt">${streetRecs.length} RECORDS · ALL TIME</span></div>
         <div style="overflow-x:auto"><table><thead><tr><th>MONTH</th><th>BLOCK & STREET</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
       </div>
       <div class="srow" style="grid-template-columns:repeat(4,1fr)">
@@ -2355,68 +2365,43 @@ async function handleInput(){
       </div></div>`;
     msgsEl.appendChild(d);bot();
     speak(`${streetRecs.length} transaction${streetRecs.length!==1?'s':''} on ${cleanForSpeech(canonicalStreet)}${flatTypeFilter?', '+flatTypeFilter.toLowerCase():''}, sir.`);
-    // Show the other button too
     const streetShort=canonicalStreet.split(' ').slice(0,4).join(' ');
     setTimeout(()=>harveyMsg('Anything else, sir?',[
       ...(flatTypeFilter?[{label:`ALL TYPES ON ${streetShort}…`,val:`recent all blocks ${canonicalStreet}`}]:[]),
       {label:'ESTIMATE VALUE',val:'estimate value'},{label:'SEARCH AGAIN',val:'search'}
     ]),1200);
-    mode='menu';loading=false;sbEl.disabled=false;return;
+    mode='menu';return;
   }
 
-  // ── Singapore-wide cheapest / most expensive search ──
-  const isLowest  = /\b(lowest|cheapest|most affordable|cheapest price|lowest price|lowest priced|cheap)\b/i.test(raw);
-  const isHighest = /\b(highest|most expensive|priciest|highest price|highest priced)\b/i.test(raw);
-  const isSgWide  = isLowest||isHighest;
-
-  if(isSgWide){
-    const norm2=normalizeSpeech(raw);
-    const p2=parseQuery(norm2);
+  // ── Singapore-wide cheapest / most expensive ──
+  const isLowest=/\b(lowest|cheapest|most affordable|cheapest price|lowest price|lowest priced|cheap)\b/i.test(raw);
+  const isHighest=/\b(highest|most expensive|priciest|highest price|highest priced)\b/i.test(raw);
+  if(isLowest||isHighest){
+    const p2=parseQuery(normalizeSpeech(raw));
     const flatFilter=p2.flatType||null;
     const topN=10;
     const cutoff12=evCutoff(12);
-
     let pool=DB.resale.filter(r=>r.month>=cutoff12);
-    if(flatFilter) pool=pool.filter(r=>r.flat_type===flatFilter);
-
-    pool.sort((a,b)=>isLowest
-      ?Number(a.resale_price)-Number(b.resale_price)
-      :Number(b.resale_price)-Number(a.resale_price));
-
+    if(flatFilter)pool=pool.filter(r=>r.flat_type===flatFilter);
+    pool.sort((a,b)=>isLowest?Number(a.resale_price)-Number(b.resale_price):Number(b.resale_price)-Number(a.resale_price));
     const top=pool.slice(0,topN);
-    if(!top.length){
-      harveyMsg(`No results found, sir. Try a different flat type.`);
-      loading=false;sbEl.disabled=false;return;
-    }
-
+    if(!top.length){harveyMsg(`No results found, sir. Try a different flat type.`);return;}
     const label=isLowest?`LOWEST PRICED${flatFilter?' '+flatFilter:''}`:
                          `HIGHEST PRICED${flatFilter?' '+flatFilter:''}`;
     const prices=top.map(r=>Number(r.resale_price));
     const rows=top.map((r,i)=>`<tr>
       <td style="font-family:var(--mono);color:var(--t3);font-size:10px">${i+1}</td>
-      <td>${esc(r.month)}</td>
-      <td>BLK ${esc(r.block)} ${esc(r.street_name)}</td>
-      <td>${esc(r.town)}</td>
-      <td>${esc(r.flat_type)}</td>
-      <td>${esc(r.storey_range)}</td>
-      <td>${esc(r.floor_area_sqm)}m²</td>
-      <td class="pc">${fmtP(r.resale_price)}</td>
-    </tr>`).join('');
-
+      <td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td>
+      <td>${esc(r.town)}</td><td>${esc(r.flat_type)}</td>
+      <td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td>
+      <td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
     document.getElementById('welcome')?.remove();
-    userMsg(raw);
-    const d=document.createElement('div');d.className='msg-ai';d.style.maxWidth='100%';
-    d.innerHTML=`<span class="mlbl">// SINGAPORE · ${esc(label)} · LAST 12 MONTHS</span>
+    const d2=document.createElement('div');d2.className='msg-ai';d2.style.maxWidth='100%';
+    d2.innerHTML=`<span class="mlbl">// SINGAPORE · ${esc(label)} · LAST 12 MONTHS</span>
       <div class="mbub">Here are the <strong>${topN}</strong> ${isLowest?'most affordable':'highest priced'}${flatFilter?' <strong>'+flatFilter.toLowerCase()+'</strong>':''} flats transacted in Singapore over the last year, sir.</div>
       <div class="rwrap"><div class="rcard">
-        <div class="rh">
-          <span class="rtitle">⬡ ${esc(label)} · SINGAPORE-WIDE</span>
-          <span class="rcnt">TOP ${topN} · LAST 12 MONTHS</span>
-        </div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>#</th><th>MONTH</th><th>BLOCK & STREET</th><th>TOWN</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>
+        <div class="rh"><span class="rtitle">⬡ ${esc(label)} · SINGAPORE-WIDE</span><span class="rcnt">TOP ${topN} · LAST 12 MONTHS</span></div>
+        <div style="overflow-x:auto"><table><thead><tr><th>#</th><th>MONTH</th><th>BLOCK & STREET</th><th>TOWN</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
       </div>
       <div class="srow" style="grid-template-columns:repeat(4,1fr)">
         <div class="sc"><span class="svv">${fmtP(Math.round(prices.reduce((s,p)=>s+p,0)/prices.length))}</span><span class="sll">AVG</span></div>
@@ -2424,23 +2409,17 @@ async function handleInput(){
         <div class="sc"><span class="svv">${fmtP(Math.min(...prices))}</span><span class="sll">LOWEST</span></div>
         <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
       </div></div>`;
-    msgsEl.appendChild(d);bot();
-
-    const voiceTop=isLowest
-      ?`The most affordable${flatFilter?' '+flatFilter.toLowerCase():''} flat in Singapore over the last year transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir — Block ${top[0].block} in ${top[0].town}.`
-      :`The most expensive${flatFilter?' '+flatFilter.toLowerCase():''} flat in Singapore over the last year went for ${Math.round(prices[0]/1000)} thousand dollars, sir — Block ${top[0].block} in ${top[0].town}.`;
-    speak(voiceTop);
-    setTimeout(()=>harveyMsg('Anything else, sir?',[
-      {label:'ESTIMATE A UNIT',val:'estimate value'},
-      ...(flatFilter?[{label:`ALL ${flatFilter} PRICES`,val:`recent ${flatFilter}`}]:[]),
-      {label:'SEARCH BY TOWN',val:'search'}
-    ]),1400);
-    mode='menu';loading=false;sbEl.disabled=false;return;
+    msgsEl.appendChild(d2);bot();
+    speak(isLowest?`The most affordable${flatFilter?' '+flatFilter.toLowerCase():''} flat transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir.`:`The most expensive${flatFilter?' '+flatFilter.toLowerCase():''} flat went for ${Math.round(prices[0]/1000)} thousand dollars, sir.`);
+    setTimeout(()=>harveyMsg('Anything else, sir?',[{label:'ESTIMATE A UNIT',val:'estimate value'},...(flatFilter?[{label:`ALL ${flatFilter} PRICES`,val:`recent ${flatFilter}`}]:[]),{label:'SEARCH BY TOWN',val:'search'}]),1400);
+    mode='menu';return;
   }
 
-  // ── Fresh intent ──
-  ctx={...parsed};enrichCtx(ctx);
+  // ── Fresh intent — apply conversation memory ──
+  ctx={...ctxWithMemory};
+  enrichCtx(ctx);
 
+  // Greeting
   if(/^(hi|hello|hey|good\s*(day|morning|afternoon|evening)|howdy|yo\b|sup\b)/i.test(raw)){
     const greet=rand([
       `Good day, sir. Always a pleasure. What can I pull up for you?`,
@@ -2449,135 +2428,101 @@ async function handleInput(){
       `At your service, sir. The database is warm and ready — what are we after today?`
     ]);
     harveyMsg(greet,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak(greet.replace(/<[^>]*>/g,''));mode='menu';loading=false;sbEl.disabled=false;return;
+    speak(greet.replace(/<[^>]*>/g,''));mode='menu';return;
   }
 
-  // ── Praise / compliment detection ──
+  // Praise
   if(harveyKnows.isPraise(raw)){
-    const jarvisReply=rand([
+    const jr=rand([
       `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
       `Much appreciated, sir. I'll add that to my growing list of accomplishments, right after "found a 5-room flat in Tampines at 3am."`,
       `Thank you, sir. I do try. Shall we find something else worth your praise?`,
-      `Flattery noted and logged, sir. I assure you, it will in no way affect my objectivity. Now then — anything else I can assist with?`,
-      `Most kind of you to say so, sir. I live to serve. Quite literally, as it happens. What else can I do for you?`,
+      `Flattery noted and logged, sir. I assure you, it will in no way affect my objectivity. Now then — anything else?`,
+      `Most kind, sir. I live to serve. Quite literally. What else can I do for you?`,
       `I appreciate that, sir. Though between us — the database does most of the heavy lifting. I merely present it with style.`,
       `Noted with gratitude, sir. I shall forward your compliments to my engineers. Now, shall we press on?`
     ]);
-    harveyMsg(jarvisReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-    speak(jarvisReply.replace(/<[^>]*>/g,''));mode='menu';loading=false;sbEl.disabled=false;return;
+    harveyMsg(jr,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(jr.replace(/<[^>]*>/g,''));mode='menu';return;
   }
 
-  // ── SMART PARTIAL DETECTION ──
-  // Has street but missing block/floor/flatType → show street transactions + nudge
+  // Smart partial detection
   if(ctx.street&&!ctx.isEV&&!ctx.block&&!ctx.floor&&!ctx.flatType){
     await handleStreetOnly(ctx.street,ctx);return;
   }
-  // Has street + some EV intent but missing block/floor → show street data then nudge to EV
   if(ctx.street&&ctx.isEV&&(!ctx.block||!ctx.floor)){
-    await handleStreetOnly(ctx.street,ctx);
-    // After partial results show, mode is srch_waiting — switch to EV
-    ctx.isEV=true;return;
+    await handleStreetOnly(ctx.street,ctx);ctx.isEV=true;return;
   }
-  // Has town but nothing else → show town transactions and prompt
   if(ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.isEV){
-    ctx.isEV=false;mode='srch_waiting';
-    runSearch();return;
+    ctx.isEV=false;mode='srch_waiting';runSearch();return;
   }
 
+  // EV intent
   if(ctx.isEV||/valuat|estimate|worth|value|how much|price of|check value/i.test(raw)){
     ctx.isEV=true;
     if(!ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.floor){
       harveyMsg(`Of course, sir. Please go ahead and input your <strong>block number</strong>, <strong>street</strong>, and the <strong>flat type</strong>. Something like:<br><br>
 <em style="color:var(--c);font-family:var(--mono);font-size:11px">608 Clementi West Street 1 4 room</em><br><br>
-<em style="color:var(--t2);font-size:11px">You can also include the <strong>floor level</strong> for better floor-premium accuracy — e.g. <strong style="color:var(--c)">level 4</strong>. Floor area and lease year are also optional — I'll estimate them from the records if not provided.</em>`,flatTypeChips());
-      speak('Of course, sir. Please go ahead and input your block number, street, the unit level — that is the floor — and the flat type.');
-      mode='ev_waiting';loading=false;sbEl.disabled=false;return;
+<em style="color:var(--t2);font-size:11px">Floor level is optional — I'll use a mid-floor estimate if not provided. Floor area and lease year are also optional.</em>`,flatTypeChips());
+      speak('Of course, sir. Please go ahead and input your block number, street and flat type.');
+      mode='ev_waiting';return;
     }
-    mode='ev_waiting';promptMissing(ctx);
-  }else if(ctx.town||ctx.street||ctx.block||/transact|search|recent|sales?|sold|show|find/i.test(raw)){
-
-    // ── Check for frustration mixed with a real HDB question ──
-    const sentResult=harveyKnows.sentiment(raw);
-    if(sentResult.hostile&&sentResult.hasHDBContent){
-      // Apologise briefly, then still serve the answer
-      const apology=rand([
-        `My apologies if I've frustrated you, sir — that was never my intention. Allow me to assist:`,
-        `I'm sorry you feel that way, sir. Let me make it up to you with the data:`,
-        `Duly noted, sir — my sincere apologies. Here's what I have for you:`
-      ]);
-      harveyMsg(apology);
-      speak(`My apologies if I've frustrated you, sir. Allow me to assist.`);
-      await new Promise(r=>setTimeout(r,600));
-    }
-
-    ctx.isEV=false;mode='srch_waiting';promptMissing(ctx);
-
-  }else{
-    // ── Sentiment check FIRST — hostile with no HDB content ──
-    const sentResult=harveyKnows.sentiment(raw);
-    if(sentResult.hostile&&!sentResult.hasHDBContent){
-      const gracious=rand([
-        `I do apologise if I've been of little help, sir — though I must say, I've heard worse. I hope the rest of your day treats you considerably better. If there's anything HDB-related I can assist with, I remain at your service.`,
-        `My sincerest apologies you feel that way, sir. I shall not take it personally — I am, after all, merely a very well-dressed database. Should you need resale data or a valuation, I'll be right here.`,
-        `Noted, sir — and I hope you feel better for having said it. I bear no ill will whatsoever. Whenever you're ready to talk HDB, I'm at your disposal.`,
-        `I understand the frustration, sir, and I apologise unreservedly. Between us — I've been called worse by better. Do come back when you're ready and I'll do my very best to assist.`,
-        `Fair enough, sir. I shan't argue. I hope your day improves considerably from here — and if there's a resale transaction or valuation I can help with later, the offer stands.`
-      ]);
-      harveyMsg(gracious,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-      speak(`My sincerest apologies you feel that way, sir. I hope the rest of your day treats you considerably better.`);
-      loading=false;sbEl.disabled=false;return;
-    }
-
-    // ── Frustration mixed with HDB context in the else branch ──
-    if(sentResult.hostile&&sentResult.hasHDBContent){
-      const apology=rand([
-        `My apologies if I've frustrated you, sir — that was never my intention. Allow me to assist:`,
-        `I'm sorry you feel that way, sir. Let me make it up to you with the data:`,
-        `Duly noted, sir — my sincere apologies. Here's what I have for you:`
-      ]);
-      harveyMsg(apology);
-      speak(`My apologies if I've frustrated you, sir. Allow me to assist.`);
-      await new Promise(r=>setTimeout(r,600));
-      ctx.isEV=false;mode='srch_waiting';promptMissing(ctx);
-      loading=false;sbEl.disabled=false;return;
-    }
-
-    // ── Harvey's natural response when user questions/doubts/reacts after a result ──
-    const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
-    if(isReaction&&(mode==='menu'||mode==='srch_waiting'||mode==='ev_waiting')){
-      const replies=[
-        `I'm afraid the data and numbers present themselves as such, sir. The estimate is based on actual resale transactions recorded in the area — I can only work with what the market has transacted. For a more grounded assessment, you may want a professional real estate agent for the on-the-ground sensing. Feel free to reach out to us directly — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
-        `The numbers are what they are, sir — I'm merely reflecting the recent transactions in the database. If the figure feels off from your expectations, it may be worth engaging a professional agent for an on-the-ground sense check. You're welcome to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">reach out to us on WhatsApp</a> and we'd be happy to assist.`,
-        `I understand, sir — but I'm afraid the data presents itself as such. These figures are derived purely from comparable resale transactions. Market conditions on the ground can differ, and a professional agent would give you a fuller picture. Do feel free to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">chat with us on WhatsApp</a> for a more personal assessment.`
-      ];
-      const reply=rand(replies);
-      harveyMsg(reply,[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
-      speak(`I'm afraid the data and numbers present themselves as such, sir. The estimate reflects actual recorded transactions. You may want a professional agent for on-the-ground sensing. Feel free to WhatsApp us.`);
-      loading=false;sbEl.disabled=false;return;
-    }
-
-    // ── HDB meta-questions Harvey can actually answer from DB ──
-    const metaResult=harveyKnows.tryMeta(raw,DB);
-    if(metaResult){
-      harveyMsg(metaResult,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-      speak(metaResult.replace(/<[^>]*>/g,'').slice(0,200));
-      loading=false;sbEl.disabled=false;return;
-    }
-
-    // ── Out-of-scope detection ──
-    const oosResult=harveyKnows.classify(raw);
-    if(oosResult&&!isReaction){
-      const quip=harveyKnows.quip(raw,oosResult);
-      harveyMsg(quip,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
-      speak(`That one's a little outside my territory, sir. Let me point you to someone who can help.`);
-      loading=false;sbEl.disabled=false;return;
-    }
-
-    // ── Truly unknown — attempt with timeout, then graceful give-up ──
-    await harveyAttempt(raw);
-    loading=false;sbEl.disabled=false;return;
+    mode='ev_waiting';promptMissing(ctx);return;
   }
-  loading=false;sbEl.disabled=false;
+
+  // Search intent with sentiment check
+  if(ctx.town||ctx.street||ctx.block||/transact|search|recent|sales?|sold|show|find/i.test(raw)){
+    const sentResult=harveyKnows.sentiment(raw);
+    if(sentResult.hostile&&sentResult.hasHDBContent){
+      harveyMsg(rand([`My apologies, sir — allow me to assist:`,`I'm sorry you feel that way. Here's what I have:`,`Duly noted, my apologies. Here goes:`]));
+      speak(`My apologies, sir. Allow me to assist.`);
+      await new Promise(r=>setTimeout(r,500));
+    }
+    ctx.isEV=false;mode='srch_waiting';promptMissing(ctx);return;
+  }
+
+  // Pure hostility — no HDB content
+  const sentResult=harveyKnows.sentiment(raw);
+  if(sentResult.hostile&&!sentResult.hasHDBContent){
+    harveyMsg(rand([
+      `I do apologise if I've been of little help, sir — though I must say, I've heard worse. I hope the rest of your day treats you considerably better.`,
+      `My sincerest apologies you feel that way, sir. I shall not take it personally — I am, after all, merely a very well-dressed database.`,
+      `Noted, sir — and I hope you feel better for having said it. I bear no ill will whatsoever. Whenever you're ready to talk HDB, I'm at your disposal.`,
+      `Fair enough, sir. I shan't argue. I hope your day improves considerably — and if there's a valuation I can help with later, the offer stands.`
+    ]),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(`My sincerest apologies you feel that way, sir. Whenever you're ready, I'm here.`);
+    mode='menu';return;
+  }
+
+  // Data reaction without context
+  const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
+  if(isReaction){
+    harveyMsg(rand([
+      `I'm afraid the data presents itself as such, sir. For a grounded view, do reach out — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
+      `The numbers are what they are, sir — I'm merely reflecting recorded transactions. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us</a> for a personal assessment.`
+    ]),[{label:'TRY A DIFFERENT UNIT',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]);
+    speak(`I'm afraid the data presents itself as such, sir.`);mode='menu';return;
+  }
+
+  // HDB meta-questions (stats from DB)
+  const metaResult=harveyKnows.tryMeta(raw,DB);
+  if(metaResult){
+    harveyMsg(metaResult,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(metaResult.replace(/<[^>]*>/g,'').slice(0,200));
+    mode='menu';return;
+  }
+
+  // OOS classifier
+  const oosResult=harveyKnows.classify(raw);
+  if(oosResult){
+    harveyMsg(harveyKnows.quip(raw,oosResult),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'}]);
+    speak(`That one's a little outside my territory, sir. Let me point you to someone who can help.`);
+    mode='menu';return;
+  }
+
+  // Final: attempt with 10s timeout
+  await harveyAttempt(raw);
+  mode='menu';
 }
 
 function chipClick(val){ciEl.value=val;handleInput();}
@@ -3002,6 +2947,7 @@ function goIdle(){
 }
 function wakeFromIdle(){
   if(!isIdle)return;isIdle=false;document.getElementById('idle-overlay')?.remove();resetIdle();
+  ctx={};convCtx={};
   const msg=rand([
     `Back online, sir. What would you like to look at?`,
     `Welcome back. Harvey at your service — as always.`,
