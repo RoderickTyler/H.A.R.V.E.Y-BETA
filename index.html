@@ -7793,6 +7793,13 @@ const EMOTION_JOINS = {
   // ── JOY / HAPPINESS ──
   joy: [
     'lol','haha','hehe','lmao','rofl','omg','wow','yay','woo','yes','yep','yeah','yea','nice','cool','great','awesome','amazing','fantastic','wonderful','brilliant','excellent','superb','perfect','lovely','delightful',
+    // Oxford joy
+    'glad','pleased','delighted','joyful','cheerful','content','satisfied','grateful','thankful','fortunate','blissful','radiant','elated','ecstatic','jubilant','overjoyed','thrilled','euphoric','exhilarated',
+    // Singlish joy — full corpus
+    'shiok','sedap','bagus','solid','song','heng','hosei','ho seh','ho seh liao','buay pai',
+    'power lah','sibei good','sibei shiok','solid sia','wah shiok','not bad lah','best lah',
+    'steady bom pi pi','good one','solid bird bird','ai sui','selamat','chio bu',
+    'jia you','bojio lah','steady pom pi pi','swee swee','solid one',
     // English high
     'bliss','blissful','ecstasy','ecstatic','euphoria','euphoric','jubilation','jubilant',
     'rapture','rapturous','elated','elation','overjoyed','thrilled','exhilarated','exhilaration',
@@ -7816,11 +7823,20 @@ const EMOTION_JOINS = {
     'good choice','wise choice','smart move','good move','right move','on point',
     'nailed it','spot on','got it right','turned out great','worked out',
     // Emoji context words
-    'grinning','smiling','laughing','lol happy','haha','hahaha','hehe',
+    'grinning','smiling','laughing','lol happy','haha','hahaha','hehe',,
+    // Oxford 3000 complete — 32 words
+    'happy','delight','enjoy','enjoyable','enjoyment','pleasure','pleasant','appreciate','celebrate','celebration','lively','positive','extraordinary','outstanding','remarkable','impressive','proud','pride','succeed','success','victory','laugh','smile','funny','amusing','entertaining','comfortable','relaxed','peaceful','great','good','nice'
   ],
 
   // ── SADNESS ──
   sad: [
+    // Oxford + Singlish sad — complete corpus
+    'miserable','gloomy','melancholy','despondent','dejected','forlorn','heartbroken',
+    'distressed','distraught','crushed','sorrowful','mournful','hopeless',
+    'buay tahan','sian liao','gone case','cannot make it','no hope liao','die liao',
+    'chey','cheyyy','hong gan liao','khao peh khao bu','kena sabo','last time never',
+    'so suay','suay suay','pek chek liao','die die also','very sian','walao so sad',
+    'buay tahan','sian liao','gone case','cannot make it','no hope liao',
     // High intensity
     'agony','anguish','brokenhearted','broken hearted','despair','devastated',
     'grief','misery','miserable','heartbroken','heart broken','shattered',
@@ -7845,7 +7861,9 @@ const EMOTION_JOINS = {
     'paiseh sad','aiyoh so sad','aiyah','aiyoh','wah so sad','like that also can',
     'feel like giving up','want to give up','cannot take it','cannot tahan',
     'tahan cannot','very difficult','so difficult','super difficult','hm',
-    'hmm','hmmm',
+    'hmm','hmmm',,
+    // Oxford 3000 complete — 27 words
+    'sad','sadness','unhappy','lonely','empty','hollow','lost','disappointed','disappointment','regret','miss','cry','hurt','pain','suffer','suffering','broken','failure','fail','struggle','terrible','awful','unfortunate','unlucky','sensitive','dark','depressed'
   ],
 
   // ── FEAR / ANXIETY ──
@@ -7876,7 +7894,9 @@ const EMOTION_JOINS = {
     'very nervous','nervous leh','nervous lah','abit scared','a bit scared',
     'so nerve wracking','nerve wracking','intimidating','daunting',
     'overwhelming','so overwhelming','very overwhelming','a lot to process',
-    'a lot of info','too much info','information overload',
+    'a lot of info','too much info','information overload',,
+    // Oxford 3000 complete — 14 words
+    'afraid','scared','horror','dangerous','threat','worried','concern','anxiety','stress','stressed','uncomfortable','suspicious','frightening','scary'
   ],
 
   // ── ANGER / FRUSTRATION — Full Singapore multilingual cursing corpus ──
@@ -7884,7 +7904,13 @@ const EMOTION_JOINS = {
     // English high-intensity
     'enraged','furious','irate','livid','outraged','wrathful',
     'extremely angry','very angry','so angry','really angry',
-    'fuck','fucking','fucker','shit','bullshit','fucked','wtf','what the fuck','what the hell','what the heck',
+    'fuck','fucking','fucker','shit','bullshit',
+    // Oxford anger
+    'furious','livid','enraged','irate','infuriated','incensed','outraged','seething','indignant','irritated','exasperated','aggravated','agitated','bitter','hostile','resentful','contemptuous',
+    // Singlish anger — full corpus
+    'sian','sibei sian','very sian','bo liao','sianz','buay song','pek chek','very pek chek',
+    'nabei','kee siao','vomit blood','mang zang','got problem ah','siam','tiam','diam',
+    'wa lan eh','kuku','tio bo','see you outside','fucked','wtf','what the fuck','what the hell','what the heck',
     'screw this','screw you','screw off','bullshit','crap',
     'bloody hell','damn it','dammit','bloody useless','goddamn',
     'piss off','pissed off','pissed','fed up','had enough',
@@ -7955,7 +7981,9 @@ const EMOTION_JOINS = {
     'no hope lah','no hope sia','hopeless lah',
     'bo hope','bo hope lah','confirm no hope',
     'screw lah','screw sia','screw this lah',
-    'like that also can','liddat how','how lah',
+    'like that also can','liddat how','how lah',,
+    // Oxford 3000 complete — 19 words
+    'angry','anger','annoyed','annoying','hate','hatred','dislike','unfair','wrong','blame','accuse','aggressive','violent','argue','argument','conflict','cruel','mean','jealous'
   ],
 
   // ── DISGUST / DISAPPOINTMENT ──
@@ -7981,6 +8009,10 @@ const EMOTION_JOINS = {
 
   // ── SURPRISE ──
   surprise: [
+    // Oxford + Singlish surprise additions
+    'stunned','bewildered','dumbfounded','flabbergasted','speechless','incredulous',
+    'wah lau','wah lau eh','wah seh','alamak','aiyoh','aiyoyo','aiyah','aiseh','sia','siah','orh','wa seh',
+    'confirm plus chop','eh siao',
     // High
     'amazed','astonished','astounded','thunderstruck','blown away',
     'mind blown','cannot believe','can\'t believe','unbelievable','incredible',
@@ -8001,7 +8033,9 @@ const EMOTION_JOINS = {
     'alamak','aiyoh','aiyah','eh serious ah','eh really ah','eh got meh',
     'serious boh','got such thing boh','really one ah','isit','is it',
     'seriously one','really one','confirm ah','sure or not','sure boh',
-    'power leh','so power','very power','steady leh','very steady','steady bom',
+    'power leh','so power','very power','steady leh','very steady','steady bom',,
+    // Oxford 3000 complete — 10 words
+    'surprising','unexpected','shocking','extraordinary','unusual','strange','odd','weird','reveal','amazed'
   ],
 
   // ── LOVE / AFFECTION ──
@@ -8027,11 +8061,16 @@ const EMOTION_JOINS = {
     'nice neighbourhood','very nice neighbourhood','good neighbourhood',
     'nice area','very nice area','so nice here','like this place very much',
     'like this flat very much','this flat very nice','this block very nice',
-    'got feeling','good feeling','positive feeling','excited about this',
+    'got feeling','good feeling','positive feeling','excited about this',,
+    // Oxford 3000 complete — 20 words
+    'love','kind','kindness','gentle','generous','warmth','friendly','friendship','relationship','together','support','trust','respect','loyal','honest','sincere','genuine','beautiful','attractive','sweet'
   ],
 
   // ── ANTICIPATION / EXCITEMENT ──
   anticipation: [
+    // Oxford + Singlish anticipation additions
+    'enthusiastic','hopeful','optimistic','motivated','determined','confident','ambitious','inspired','passionate',
+    'see how','agak agak','maybe lah','later lah','wait first','can can','sure or not','try try','boleh','akan datang','die die must try','chiong','lobang','can one','confirm lah',
     // High
     'eager','vigilant','zealous','zest','cannot wait','can\'t wait',
     'so eager','very eager','dying to know','dying to see',
@@ -8058,11 +8097,16 @@ const EMOTION_JOINS = {
     'should be ok lah','should be fine lah','should work out',
     'got hope','got chance','there is hope','bright future',
     'promising','looks promising','seems promising','potential',
-    'got potential','good potential','upside','lots of upside',
+    'got potential','good potential','upside','lots of upside',,
+    // Oxford 3000 complete — 23 words
+    'hope','wish','desire','dream','goal','plan','prepare','ready','expect','expectation','opportunity','chance','possibility','potential','promise','creative','explore','discover','adventure','journey','learn','attempt','effort'
   ],
 
   // ── VULNERABILITY / SELF-CONSCIOUSNESS ──
   vulnerable: [
+    // Oxford + Singlish vulnerable additions
+    'exhausted','weary','drained','overwhelmed','anxious','nervous','tense','restless','insecure','uncertain',
+    'blur like sotong','act blur','paiseh','abit paiseh','very blur','dunno leh','malu','pang seh','shame shame','sotong','chao keng','geh kiang','mong cha cha',
     // High
     'mortified','humiliated','self hatred','self-hatred','ashamed','shame',
     'so embarrassed','deeply ashamed','cannot face anyone',
@@ -8087,7 +8131,9 @@ const EMOTION_JOINS = {
     'please be gentle','dont judge','no judgement','just asking',
     'is it a dumb question','dumb question','silly question',
     'first time doing this','first time buyer','first timer','fresh to this',
-    'new to this','very new to this','learning as i go',
+    'new to this','very new to this','learning as i go',,
+    // Oxford 3000 complete — 19 words
+    'tired','weak','sick','disease','pain','suffer','struggle','difficult','worry','stress','lonely','empty','confused','doubt','embarrassed','shy','boring','bored','sensitive'
   ],
 };
 
@@ -8922,6 +8968,15 @@ const UNIVERSAL_WORDS = {
   // Food vocab — single words that should trigger joy/chitchat not hallucination
   chick:      'food',    chicken: 'food',    duck:    'food',    pork:    'food',
   mee:        'food',    hoon:    'food',    kuay:    'food',    teow:   'food',
+  // Singlish Tab 3 complete food vocabulary
+  sedap:      'food',    jelak:   'food',    hiam:    'food',    makan:  'food',
+  dabao:      'food',    baohe:   'food',    wokhe:   'food',    otak:   'food',
+  cendol:     'food',    rojak:   'food',    popiah:  'food',    otah:   'food',
+  bakkwa:     'food',    satay:   'food',    chaokuay:'food',
+  // Singlish Tab 1 food/lifestyle
+  jiak:       'food',    belanja: 'food',    chope:   'anticipation',
+  kopitiam:   'joy',     lepak:   'joy',     lobang:  'anticipation',
+  chiong:     'anticipation', swee: 'joy',   atas:    'joy',
   wanton:     'joy',    dumpling:'joy',    porridge:'joy',    congee: 'food',
   curry:      'food',    biryani: 'food',    mutton:  'joy',    tofu:   'food',
   beef:       'joy',    fish:    'food',    prawn:   'food',    crab:    'food',
@@ -8932,6 +8987,26 @@ const UNIVERSAL_WORDS = {
   // Art / creativity vocab
   art:        'anticipation',
   lol:        'joy',    haha:    'joy',    hehe:    'joy',    omg:    'surprise',
+  // Singlish expressions → emotion mapping
+  shiok:      'joy',    sedap:   'food',   bagus:   'joy',    steady:  'joy',
+  paiseh:     'vulnerable', sian: 'anger', shiok:   'joy',   pekchek: 'anger',
+  alamak:     'surprise', aiyoh: 'surprise', wah:   'surprise', chio:   'joy',
+  bojio:      'sad',    buay:    'anger',  liao:    'anticipation', leh: 'anticipation',
+  lor:        'anticipation', sia: 'surprise', walao: 'surprise', sotong: 'vulnerable',
+  // Singlish food
+  jelak:      'food',   wok:     'food',   makan:   'food',   dabao:   'food',
+  baohe:      'food',   hiam:    'food',   qoqo:    'food',   bakgut:  'food',
+  // Oxford additions to UNIVERSAL_WORDS
+  glad:       'joy',    pleased: 'joy',    elated:  'joy',    thrilled:'joy',
+  grateful:   'joy',    content: 'joy',    ecstatic:'joy',    jubilant:'joy',
+  miserable:  'sad',    gloomy:  'sad',    forlorn: 'sad',    crushed: 'sad',
+  devastated: 'sad',    hopeless:'sad',    distraught:'sad',  mournful:'sad',
+  furious:    'anger',  livid:   'anger',  irate:   'anger',  seething:'anger',
+  outraged:   'anger',  hostile: 'anger',  bitter:  'anger',  resentful:'anger',
+  stunned:    'surprise', astonished:'surprise', bewildered:'surprise', incredulous:'surprise',
+  eager:      'anticipation', enthusiastic:'anticipation', motivated:'anticipation',
+  exhausted:  'vulnerable', weary:'vulnerable', overwhelmed:'vulnerable', drained:'vulnerable',
+  anxious:    'vulnerable', nervous:'vulnerable', insecure:'vulnerable',
   wow:        'surprise', yay:   'joy',    woo:     'joy', design:  'anticipation', creative:'anticipation',
   craft:      'anticipation', style:   'joy',    aesthetic:'joy',   beauty: 'love',
   music:      'joy',    melody:  'joy',    rhythm:  'joy',    beat:   'joy',
