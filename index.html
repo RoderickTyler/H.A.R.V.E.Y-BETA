@@ -4159,14 +4159,20 @@ async function _handleInputInner(raw){
   }
 
   // Smart partial detection
-  if(ctx.street&&!ctx.isEV&&!ctx.block&&!ctx.floor&&!ctx.flatType){
-    await handleStreetOnly(ctx.street,ctx);return;
-  }
-  if(ctx.street&&ctx.isEV&&(!ctx.block||!ctx.floor)){
-    await handleStreetOnly(ctx.street,ctx);ctx.isEV=true;return;
-  }
-  if(ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.isEV){
-    ctx.isEV=false;mode='srch_waiting';runSearch();return;
+  // GUARD: only route to data if parsed has an actual data signal from THIS turn
+  // Prevents convCtx.town memory from firing search when user says "the art" or "brew"
+  const _parsedHasDataSignal=!!(parsed.town||parsed.street||parsed.block||parsed.floor||
+    parsed.flatType||/transact|search|recent|sold|find|show|estimate|valuat|resale/i.test(raw));
+  if(_parsedHasDataSignal){
+    if(ctx.street&&!ctx.isEV&&!ctx.block&&!ctx.floor&&!ctx.flatType){
+      await handleStreetOnly(ctx.street,ctx);return;
+    }
+    if(ctx.street&&ctx.isEV&&(!ctx.block||!ctx.floor)){
+      await handleStreetOnly(ctx.street,ctx);ctx.isEV=true;return;
+    }
+    if(ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.isEV){
+      ctx.isEV=false;mode='srch_waiting';runSearch();return;
+    }
   }
 
   // EV intent
@@ -5291,7 +5297,16 @@ function harveyChitChat(raw, convCtx){
     }
     return null;
   }
-  const topicKey=topicOf(q);
+  // ── Topic continuation: carry _lastTopic for short ambiguous inputs ──
+  // "brew" after "coffee" → _lastTopic=coffee → treat as coffee continuation
+  let topicKey=topicOf(q);
+  const _rawTokens=q.split(/\s+/).filter(t=>t.length>1);
+  const _noDataSignal=!topicKey&&_rawTokens.length<=4&&
+    !/(tampines|clementi|bedok|bishan|jurong|yishun|woodlands|sengkang|punggol|hougang|toa payoh|marine parade|bukit|geylang|serangoon|queenstown|ang mo kio|pasir ris|sembawang|central area|choa chu kang|kallang)/.test(q)&&
+    !/\d{3,}|(room|resale|flat|block|floor|level|storey|street|ave|road|drive|crescent|close|lane|way|place|terrace|walk)/.test(q);
+  if(!topicKey&&_noDataSignal&&harveyChitChat._lastTopic){
+    topicKey=harveyChitChat._lastTopic;
+  }
 
   // Profound depth tracking
   if(!harveyChitChat._depth)harveyChitChat._depth={};
@@ -6094,7 +6109,7 @@ function harveyChitChat(raw, convCtx){
     ));
   }
 
-  if(m(/\bcoffee\b|\bkopi\b|\bbreakfast\b|morning routine/)){
+  if(m(/\bcoffee\b|\bkopi\b|\bbreakfast\b|morning routine|\blatte\b|\bespresso\b|\bbrew\b|\bcappuccino\b|\baeropress\b|\bchemex\b|\bcortado\b|\bbarista\b|\bcold brew\b|\bpour over\b/)){
     return withCtx(r(
       `Ah, coffee, sir. The fuel that powers human decision-making. I run on electricity, but I respect the ritual. Shall we review some data while you enjoy it?`,
       `Kopi or teh, sir? A fine way to start the morning. I've already been running since boot — whenever you're caffeinated and ready, I'm at your service.`,
@@ -8736,6 +8751,20 @@ const UNIVERSAL_WORDS = {
   show:       'anticipation', tell: 'anticipation', find:'anticipation',
   search:     'anticipation', look: 'anticipation', check:'anticipation',
 
+  // Coffee / tea / drink vocab — so "brew", "latte", "roast" etc get joy response
+  brew:       'joy',    roast:   'joy',    grind:   'joy',    steep:  'joy',
+  barista:    'joy',    espresso:'joy',    latte:   'joy',    mocha:  'joy',
+  cappuccino: 'joy',    macchiato:'joy',   ristretto:'joy',   lungo:  'joy',
+  cortado:    'joy',    chemex:  'joy',    aeropress:'joy',   v60:    'joy',
+  hojicha:    'joy',    matcha:  'joy',    sencha:  'joy',    oolong: 'joy',
+  puerh:      'joy',    rooibos: 'joy',    chamomile:'joy',   tisane: 'joy',
+  // Food vocab
+  ramen:      'joy',    sashimi: 'joy',    omakase: 'joy',    wagyu:  'joy',
+  laksa:      'joy',    satay:   'joy',    rendang: 'joy',    nasi:   'joy',
+  // Art / creativity vocab
+  art:        'anticipation', design:  'anticipation', creative:'anticipation',
+  craft:      'anticipation', style:   'joy',    aesthetic:'joy',   beauty: 'love',
+  music:      'joy',    melody:  'joy',    rhythm:  'joy',    beat:   'joy',
   // Work
   work:       'anticipation', job:  'anticipation', office:'anticipation',
   meeting:    'fear',   deadline:'fear',   project:'anticipation',
