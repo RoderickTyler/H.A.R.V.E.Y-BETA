@@ -2128,7 +2128,11 @@ function reverseStreet(streetRaw){
   const _directionalsToKeep=['NORTH','SOUTH','EAST','WEST','CENTRAL','NTH','STH','EST','WST'];
   const stripRx=new RegExp(`\\b(${typeRxStr.replace(/\|NTH|\|STH|\|EST|\|WST/g,'')}|STREET|AVENUE|DRIVE|ROAD|CLOSE|CRESCENT|LANE|PLACE|HEIGHTS|GROVE|TERRACE|GARDENS|COURTS|PARK|MARKET|UPPER|LOWER|LORONG|JALAN|BUKIT|COMMONWEALTH|CHOA|CHU|KANG|ANG|MO|KIO|NEW|OLD)\\b`,'g');
   const nameOnly=s.replace(stripRx,'').replace(/\d+[A-Z]?/g,'').replace(/\s+/g,' ').trim();
-  const nameWords=nameOnly.split(' ').filter(w=>w.length>=3);
+  // Expand abbreviated directionals back to full form for DB matching
+  // DB stores "CLEMENTI WEST ST 1" but contractStreetAbbr gives us "CLEMENTI WST ST 1"
+  // Without expansion: nameWord "WST" won't match "WEST" in the DB → false reject
+  const _dirMap={NTH:'NORTH',STH:'SOUTH',EST:'EAST',WST:'WEST',CTRL:'CENTRAL'};
+  const nameWords=nameOnly.split(' ').filter(w=>w.length>=3).map(w=>_dirMap[w]||w);
 
   // Candidate validation — HARD: type AND number must both match
   function ok(dbName){
@@ -2140,12 +2144,18 @@ function reverseStreet(streetRaw){
 
   // S2: name word scoring with hard constraints
   if(nameWords.length){
+    // Build bidirectional map: check BOTH full form and abbreviated form
+    // DB is inconsistent: "BEDOK NTH AVE" (abbreviated) vs "CLEMENTI WEST ST" (full WEST)
+    // So nameWord "NORTH" should also match "NTH" and vice versa
+    const _dirBoth={'NORTH':'NTH','SOUTH':'STH','EAST':'EST','WEST':'WST','CENTRAL':'CTRL',
+                    'NTH':'NORTH','STH':'SOUTH','EST':'EAST','WST':'WEST','CTRL':'CENTRAL'};
     const sc=[];const seen=new Set();
     for(const r of DB.resale){
       if(!r.street_name||seen.has(r.street_name))continue;seen.add(r.street_name);
       if(!ok(r.street_name))continue;
       const up=r.street_name.toUpperCase();
-      const score=nameWords.filter(w=>up.includes(w)).length;
+      // Each nameWord matches if either the word itself OR its abbreviation/expansion is in DB street
+      const score=nameWords.filter(w=>up.includes(w)||(_dirBoth[w]&&up.includes(_dirBoth[w]))).length;
       if(score>0)sc.push({score,street:r.street_name});
     }
     sc.sort((a,b)=>b.score-a.score);
@@ -4210,13 +4220,19 @@ async function _handleInputInner(raw){
   const _parsedHasDataSignal=!!(parsed.town||parsed.street||parsed.block||parsed.floor||
     parsed.flatType||/transact|search|recent|sold|find|show|estimate|valuat|resale/i.test(raw));
   if(_parsedHasDataSignal){
-    if(ctx.street&&!ctx.isEV&&!ctx.block&&!ctx.floor&&!ctx.flatType){
+    // Street present → always use handleStreetOnly (flatType/floor just filter within the street)
+    if(ctx.street&&!ctx.isEV){
       await handleStreetOnly(ctx.street,ctx);return;
     }
     if(ctx.street&&ctx.isEV&&(!ctx.block||!ctx.floor)){
       await handleStreetOnly(ctx.street,ctx);ctx.isEV=true;return;
     }
+    // Town only (no street) → runSearch
     if(ctx.town&&!ctx.street&&!ctx.block&&!ctx.flatType&&!ctx.isEV){
+      ctx.isEV=false;mode='srch_waiting';runSearch();return;
+    }
+    // Town + flatType/block (no street) → runSearch with filters
+    if(ctx.town&&!ctx.street&&(ctx.block||ctx.flatType)&&!ctx.isEV){
       ctx.isEV=false;mode='srch_waiting';runSearch();return;
     }
   }
