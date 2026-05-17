@@ -2122,7 +2122,11 @@ function reverseStreet(streetRaw){
   const streetNum=numMatch?numMatch[1]:null;
 
   // Strip type words AND numbers to get pure name words
-  const stripRx=new RegExp(`\\b(${typeRxStr}|STREET|AVENUE|DRIVE|ROAD|CLOSE|CRESCENT|LANE|PLACE|HEIGHTS|GROVE|TERRACE|GARDENS|COURTS|PARK|MARKET|NORTH|SOUTH|EAST|WEST|CENTRAL|UPPER|LOWER|LORONG|JALAN|BUKIT|COMMONWEALTH|CHOA|CHU|KANG|ANG|MO|KIO|NEW|OLD)\\b`,'g');
+  // Strip TYPE words but KEEP directional words (NORTH/SOUTH/EAST/WEST/CENTRAL/NTH/STH/EST/WST)
+  // Keeping directionals ensures "CLEMENTI WEST ST" → nameWords=["CLEMENTI","WEST"]
+  // so it won't match ALL Clementi streets — needs score 2 (both words present)
+  const _directionalsToKeep=['NORTH','SOUTH','EAST','WEST','CENTRAL','NTH','STH','EST','WST'];
+  const stripRx=new RegExp(`\\b(${typeRxStr.replace(/\|NTH|\|STH|\|EST|\|WST/g,'')}|STREET|AVENUE|DRIVE|ROAD|CLOSE|CRESCENT|LANE|PLACE|HEIGHTS|GROVE|TERRACE|GARDENS|COURTS|PARK|MARKET|UPPER|LOWER|LORONG|JALAN|BUKIT|COMMONWEALTH|CHOA|CHU|KANG|ANG|MO|KIO|NEW|OLD)\\b`,'g');
   const nameOnly=s.replace(stripRx,'').replace(/\d+[A-Z]?/g,'').replace(/\s+/g,' ').trim();
   const nameWords=nameOnly.split(' ').filter(w=>w.length>=3);
 
@@ -2240,12 +2244,22 @@ function parseQuery(raw){
   // Handle: "608 Clementi West Street 1" → "Clementi West Street 1"
   // Also handle abbreviations: ST, DR, CL, AVE, RD, CRES etc
   const qNoBlock=q.replace(/^\s*(?:BLK|BLOCK)?\s*\d+[A-Z]?\s*/,'').trim();
-  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK)\s*\d*[A-Z]?)\b/);
+  // Match full street type words first, then abbreviated forms
+  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK)\s*\d*[A-Z]?)\b/)
+    ||qNoBlock.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN|NTH|STH|EST|WST|CTRL)\s*\d*[A-Z]?))\b/);
   if(stMatch){
     let candidate=stMatch[1].trim()
       .replace(/^\s*(?:BLK|BLOCK)\s*\d+[A-Z]?\s*/i,'')
       .replace(/\s+/g,' ').trim();
     if(candidate.length>3) res.street=candidate;
+  }
+  // ── Street follow-up enrichment: prepend town from convCtx if street seems partial ──
+  // e.g. user types "west street 1" after searching Clementi → prepend "CLEMENTI " for matching
+  if(res.street && typeof convCtx !== 'undefined' && convCtx.town &&
+     !res.street.includes(convCtx.town) &&
+     /\b(NORTH|SOUTH|EAST|WEST|CENTRAL|NTH|STH|EST|WST)\b/.test(res.street)){
+    const enriched = convCtx.town + ' ' + res.street;
+    res.street = enriched;
   }
   // Fallback: if no street suffix found, try reverseStreet on the whole input minus block/floor/flattype
   if(!res.street){
@@ -5787,9 +5801,10 @@ function harveyChitChat(raw, convCtx){
   // ── CHICK context-aware: lady/dating vs food vs exotic pet ──
   if(m(/\bchick(?:s)?\b/i) && m(/girl|lady|ladies|date|dating|single|cute|hot|pretty|meet|approach/i)){
     return withCtx(r(
-      `The social pursuit, sir — I respect the ambition. A well-located flat near lively F&B corridors and lifestyle amenities improves one's social calendar considerably. Tiong Bahru, Tanjong Pagar, Holland Village, Katong — the correlation is well-documented in the data.`,
-      `The dating chapter, sir — a fine one. A well-chosen flat projects quiet confidence. Which estate are we working with?`,
-      `Social life and flat location are more correlated than people admit, sir. F&B-dense corridors, good MRT connectivity, a flat you're proud of — these things compound. Where are we looking?`,
+      `The social pursuit, sir — I respect the ambition. A well-located flat near lively F&B corridors considerably improves one's social calendar. Tiong Bahru, Tanjong Pagar, Holland Village, Katong — the correlation is well-documented in the data if not the official HDB leaflets.`,
+      `The dating chapter, sir — a fine one. In my experience of property data, a man who has his address sorted projects a certain quiet confidence that no cologne can replicate. Which estate are we working with?`,
+      `Social life and flat location are more correlated than people admit, sir. The right estate puts you near the right energy — and I don't mean that as a euphemism, though I understand if you do. F&B-dense corridors, good connectivity, a flat you're proud to invite people to. Where are we looking?`,
+      `Harvey notes the ambition, sir — and shall tactfully redirect. The most effective thing I can do for your social life is help you find a flat in an area that suits the lifestyle. Tiong Bahru, Tanjong Pagar, Katong — consistently good energy. Shall we start there?`,
     ));
   }
 
@@ -5801,7 +5816,7 @@ function harveyChitChat(raw, convCtx){
   }
 
   // ── CHICK catchall — ambiguous, ask for context ──
-  if(m(/\bchick(?:s)?\b/)){
+  if(m(/\bchick(?:s)?\b|\bchicken\b(?!.*rice|.*chop|.*wing|.*curry|.*rice|.*breast|.*thigh)/)){
     return withCtx(r(
       `Chicks, sir — a word of many contexts. You could mean the birds at the Jurong Bird Park, a social ambition, or something entirely else. Could you elaborate? Either way, I suspect a well-located flat is somehow involved.`,
       `An interesting word to bring up, sir. Are we talking about the feathered variety — perhaps a nature walk near Sungei Buloh? Or is this a social matter? Either path leads back to location, which is my speciality.`,
@@ -5834,6 +5849,26 @@ function harveyChitChat(raw, convCtx){
       `Chicken rice, sir — Tian Tian at Maxwell, Boon Tong Kee on Killiney, the Liao Fan stall that earned its Michelin star honestly. The poached versus roast debate is unresolvable, which is exactly as it should be. A flat near a legitimate chicken rice institution is a flat with measurably higher morning quality. Which area suits your rice preferences?`,
       `The chicken rice question, sir — Singapore's national dish distilled into one plate. Hainanese steamed chicken, fragrant rice cooked in chicken stock, dark soy, chilli, ginger. Deceptively simple. The estates around Maxwell, Toa Payoh, and Bedok have the deepest traditions and strong resale volumes to match. Shall we look?`,
       `A connoisseur, sir. The good news is that Singapore's mature estates preserve the best chicken rice traditions — and those estates also have strong transaction data. Shall we look at what's available in the areas with the best food culture?`,
+    ));
+  }
+
+  // ── RED LIGHT / GEYLANG / SUGGESTIVE AREAS — with humour ──
+  if(m(/red light district|red.*light.*area|\bgeylang\b.*(?:go|visit|stay|near|area|famous|lor|lorong|stretch|night|food)/,
+      /(?:go|visit|stay|near|area|famous|lor|lorong|stretch|night).*\bgeylang\b/,
+      /\blorong\b.*(?:geylang|\d+)/,
+      /\bkampong glam\b|\bbugis.*street\b|\bchandu\b.*pipe/)){
+    return withCtx(r(
+      `Red light district, sir — I shall charitably assume you mean the traffic infrastructure, in which case I understand the frustration with Singapore's pedestrian crossing density. If you mean the other kind... Geylang is, in fact, a legitimate HDB town with excellent food, strong resale volumes, and a city-fringe location that economists would call underpriced relative to its connectivity. Harvey neither judges nor recommends the evening activities — but the property data is genuinely interesting. Shall we look?`,
+      `Geylang, sir — Singapore's most misunderstood estate. Yes, there is a famous stretch. There is also excellent durian, legendary frog porridge, a functional MRT interchange, and resale prices that consistently surprise first-time buyers on the upside. Harvey's position: the data does not distinguish between reasons for interest. Shall we pull the transactions?`,
+      `The Geylang question, sir — I appreciate the candour. The estate has a reputation and a reality. The reputation is colourful. The reality is: competitive pricing, strong food culture, city-fringe access, and a community that has been there for decades. Whether you are drawn by the durian or the demographics, the resale market has been quietly rewarding. Which part of the estate interests you?`,
+    ));
+  }
+
+  if(m(/\bgeylang\b/)){
+    return withCtx(r(
+      `Geylang, sir — Singapore's most misunderstood estate and, in my view, one of its most underrated. Excellent food, city-fringe location, strong MRT access, and prices that consistently outperform expectations. The estate has layers — and the data reflects all of them. Shall we look at what's been transacting?`,
+      `Ahh, Geylang — where the char kway teow is legendary and the property data is genuinely interesting, sir. City-fringe address, functional infrastructure, and resale volumes that tell a more nuanced story than the postcode's reputation suggests. What specifically were you looking at?`,
+      `Geylang, sir — the data here rewards careful reading. Strong demand, city-fringe premiums, and a community that has been established for decades. Whatever brings you to the question — I have the transactions. Shall we?`,
     ));
   }
 
