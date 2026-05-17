@@ -3953,7 +3953,11 @@ async function _handleInputInner(raw){
       const still=buildMissingPrompt(ctx).filter(s=>!s.includes('optional')&&!s.includes('I can find')&&!s.includes('mid-floor'));
       if(still.length>0){harveyMsg(`Still need a couple more, sir:<br><br>${still.join('<br>')}`);speak('Still a couple more details, sir.');return;}
       await runEV();
-    }else{await runSearch();}
+    }else{
+      // Street set while in srch_waiting → route to that specific street, not whole town
+      if(ctx.street&&!ctx.isEV){ await handleStreetOnly(ctx.street,ctx); }
+      else{ await runSearch(); }
+    }
     return;
   }
 
