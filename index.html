@@ -5800,10 +5800,20 @@ function harveyChitChat(raw, convCtx){
     ));
   }
 
-  // ── PETS / ANIMAL LOVERS ──
-  if(m(/\bpet(?:s)?\b|\bdog(?:s)?\b|\bcat(?:s)?\b|\bhamster|\brabbit|guinea pig|pet.*hdb|hdb.*pet|pet.*friendly|dog.*walk|cat.*hdb/)){
+  // ── CHICK catchall — ambiguous, ask for context ──
+  if(m(/\bchick(?:s)?\b/)){
     return withCtx(r(
-      `The pet question in HDB living, sir — one that affects flat selection more than most people plan for. Dogs are permitted with approval — one per flat, no large breeds above 15kg. Cats are officially not permitted but widely tolerated. Ground-floor units, park-proximate estates, and estates with dedicated dog run facilities are genuinely more pet-friendly in practice. Which animal are we working around?`,
+      `Chicks, sir — a word of many contexts. You could mean the birds at the Jurong Bird Park, a social ambition, or something entirely else. Could you elaborate? Either way, I suspect a well-located flat is somehow involved.`,
+      `An interesting word to bring up, sir. Are we talking about the feathered variety — perhaps a nature walk near Sungei Buloh? Or is this a social matter? Either path leads back to location, which is my speciality.`,
+      `Context helps, sir. Chicks could mean many things — and I've seen them all come up in property conversations at some point. What did you have in mind?`,
+    ));
+  }
+
+  // ── PETS / ANIMAL LOVERS ──
+  if(m(/\bpet(?:s)?\b|\bdog(?:s)?\b|\bcat(?:s)?\b|\bhamster|\brabbit|guinea pig|pet.*hdb|hdb.*pet|pet.*friendly|dog.*walk|cat.*hdb|ragdoll|maine.*coon|maincoon|persian.*cat|siamese|bengal.*cat|\bshorthair\b|british.*short|english.*short|scottish.*fold|burmese.*cat|tabby|calico/)){
+    return withCtx(r(
+      `The pet question in HDB living, sir — one that affects flat selection more than most people plan for. Dogs: approved breeds only, one per flat, no large breeds above 15kg. Cats: officially not permitted but widely tolerated in practice. Ragdolls, Maine Coons, British Shorthairs, Persians — the cat-owning community in Singapore is large, active, and largely operating on the basis that enforcement is complaint-driven. Estate culture matters as much as the rules. Which animal are we working around?`,
+      `A cat household, sir — an honourable choice and a very specific HDB grey area. The official position: not permitted. The practical reality: hundreds of thousands of cats live in HDB flats across Singapore. The key is the estate culture. Some town councils are more enforcement-minded than others. Ground-floor units and those in neighbourhoods with active community cat management tend to be more tolerant. Ragdoll, Maine Coon, British Shorthair — they all need the same thing: an owner who has thought about the location carefully. Which area?`,
       `A pet household, sir — a legitimate flat-selection criterion. Ground floor units give direct outdoor access for dogs. Park connector proximity means morning walks are genuinely pleasant. Estates near Bishan-AMK Park, East Coast, and Punggol Waterway are worth a look. What kind of pet are we optimising for?`,
       `The pet-friendly flat search, sir. For dogs: HDB approval required, small breeds only, ground floor preferred. For cats: officially not permitted, practically tolerated, enforcement complaint-driven. Estate culture matters enormously — some neighbourhoods are far more pet-friendly in practice than the rules suggest. What area are you considering?`,
     ));
@@ -5819,7 +5829,7 @@ function harveyChitChat(raw, convCtx){
   }
 
   // ── CHICKEN RICE / FOODIE DEEP ──
-  if(m(/chicken rice|hainanese chicken|roast.*chicken|ayam penyet|chicken chop|nasi ayam|chicken.*rice.*singapore|best.*chicken rice/)){
+  if(m(/chicken rice|hainanese chicken|roast.*chicken|ayam penyet|chicken chop|nasi ayam|chicken.*rice.*singapore|best.*chicken rice|\bchicken\b.*(?:eat|food|cook|fry|steam|poach|meal|lunch|dinner|hawker)/)){
     return withCtx(r(
       `Chicken rice, sir — Tian Tian at Maxwell, Boon Tong Kee on Killiney, the Liao Fan stall that earned its Michelin star honestly. The poached versus roast debate is unresolvable, which is exactly as it should be. A flat near a legitimate chicken rice institution is a flat with measurably higher morning quality. Which area suits your rice preferences?`,
       `The chicken rice question, sir — Singapore's national dish distilled into one plate. Hainanese steamed chicken, fragrant rice cooked in chicken stock, dark soy, chilli, ginger. Deceptively simple. The estates around Maxwell, Toa Payoh, and Bedok have the deepest traditions and strong resale volumes to match. Shall we look?`,
