@@ -930,7 +930,10 @@ function searchTransactions(params){
       if(useCutoff&&r.month<cutoff)return false;
       if(town&&r.town!==town)return false;
       if(ftSet&&ftSet.size&&!ftSet.has(r.flat_type))return false;
-      if(street&&!r.street_name.toUpperCase().includes(street.toUpperCase().slice(0,8)))return false;
+      // Exact street match using canonical name — NOT loose 8-char prefix
+      // "CLEMENTI WST ST 1".slice(0,8) = "CLEMENTI" matches ALL Clementi streets — wrong
+      // Instead: resolve canonical name once, then exact-match
+      if(street&&r.street_name.toUpperCase()!==street.toUpperCase())return false;
       if(block&&r.block.toUpperCase()!==block.toUpperCase())return false;
       if(storeyFilter&&storeyFilter.length&&!storeyFilter.includes(r.storey_range))return false;
       if(maxPrice&&Number(r.resale_price)>maxPrice)return false;
@@ -3565,6 +3568,14 @@ async function runSearch(){
   loading=true;sbEl.disabled=true;
   speak(rand(['Stand by, sir.','Searching records, sir.','One moment, sir.']));
   thinkingMsg();await new Promise(r=>setTimeout(r,200));
+  // Resolve canonical street name before searching — "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1"
+  if(ctx.street){
+    const _rsFound=reverseStreet(ctx.street);
+    if(_rsFound&&_rsFound.street){
+      ctx.street=_rsFound.street;
+      if(!ctx.town&&_rsFound.town) ctx.town=_rsFound.town;
+    }
+  }
   const recs=searchTransactions(ctx);
   const cutoff=evCutoff(6);
   const is6mo=recs.length>0&&recs.some(r=>r.month>=cutoff);
