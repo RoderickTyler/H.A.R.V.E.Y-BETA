@@ -973,6 +973,17 @@ const TOWN_ALIASES={
 
 function fuzzyMatchTown(q){
   const uq=q.toUpperCase();
+  // ── Jurong disambiguation: "jurong" alone → ask east or west ──
+  // Return JURONG WEST as default but flag for disambiguation
+  if(/JURONG/.test(uq)&&!uq.includes('EAST')&&!uq.includes('WEST')&&
+     !uq.includes('EST')&&!uq.includes('WST')){
+    fuzzyMatchTown._jurongAmbiguous=true;
+  } else {
+    fuzzyMatchTown._jurongAmbiguous=false;
+  }
+  // ── Handle contracted forms: JURONG EST→JURONG EAST, JURONG WST→JURONG WEST ──
+  if(uq.includes('JURONG EST')||uq.includes('JURONG EAST')) return 'JURONG EAST';
+  if(uq.includes('JURONG WST')||uq.includes('JURONG WEST')) return 'JURONG WEST';
   for(const t of TOWNS){if(uq.includes(t))return t;}
   // Alias match — short aliases (<=4 chars like CCK, AMK) must be whole word to avoid false positives
   for(const[town,aliases]of Object.entries(TOWN_ALIASES)){
@@ -4161,6 +4172,18 @@ async function _handleInputInner(raw){
   // Smart partial detection
   // GUARD: only route to data if parsed has an actual data signal from THIS turn
   // Prevents convCtx.town memory from firing search when user says "the art" or "brew"
+  // ── Jurong disambiguation — ask east or west if just "jurong" typed ──
+  if(typeof fuzzyMatchTown._jurongAmbiguous !== 'undefined' && fuzzyMatchTown._jurongAmbiguous){
+    fuzzyMatchTown._jurongAmbiguous=false;
+    const _jReply=rand([
+      `Jurong East or Jurong West, sir? They are separate towns with distinct price profiles — East is the regional centre, West is the larger residential estate.`,
+      `Just to confirm, sir — Jurong East or Jurong West? East has the regional centre premium, West has more stock and generally softer pricing.`,
+      `Which Jurong are we looking at, sir? East or West? The data is quite different between the two.`,
+    ]);
+    harveyMsg(_jReply,[{label:'JURONG EAST',val:'jurong east'},{label:'JURONG WEST',val:'jurong west'}]);
+    speak(_jReply.replace(/<[^>]*>/g,'').slice(0,200));
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
   const _parsedHasDataSignal=!!(parsed.town||parsed.street||parsed.block||parsed.floor||
     parsed.flatType||/transact|search|recent|sold|find|show|estimate|valuat|resale/i.test(raw));
   if(_parsedHasDataSignal){
@@ -8758,6 +8781,10 @@ const UNIVERSAL_WORDS = {
   cortado:    'joy',    chemex:  'joy',    aeropress:'joy',   v60:    'joy',
   hojicha:    'joy',    matcha:  'joy',    sencha:  'joy',    oolong: 'joy',
   puerh:      'joy',    rooibos: 'joy',    chamomile:'joy',   tisane: 'joy',
+  // Food vocab — single words that should trigger joy/chitchat not hallucination
+  chick:      'joy',    chicken: 'joy',    duck:    'joy',    pork:    'joy',
+  beef:       'joy',    fish:    'joy',    prawn:   'joy',    crab:    'joy',
+  rice:       'joy',    noodle:  'joy',    bread:   'joy',    cake:    'joy',
   // Food vocab
   ramen:      'joy',    sashimi: 'joy',    omakase: 'joy',    wagyu:  'joy',
   laksa:      'joy',    satay:   'joy',    rendang: 'joy',    nasi:   'joy',
@@ -9885,6 +9912,9 @@ if(SR){
 
 function normalizeSpeech(txt){
   let s=txt.trim();
+  // ── Preserve Jurong East/West BEFORE contractStreetAbbr converts EAST→EST, WEST→WST ──
+  s=s.replace(/\bjurong\s*east\b/gi,'jurong east');
+  s=s.replace(/\bjurong\s*west\b/gi,'jurong west');
   // Contract long-form street words → DB short form (works for both typed and voice)
   s=contractStreetAbbr(s.toUpperCase());
 
