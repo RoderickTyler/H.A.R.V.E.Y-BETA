@@ -2145,8 +2145,10 @@ function reverseStreet(streetRaw){
       if(score>0)sc.push({score,street:r.street_name});
     }
     sc.sort((a,b)=>b.score-a.score);
-    // Require score >= 2 for short inputs (1 word) to avoid "hoon" matching "ENG HOON ST"
-    const _minScore=nameWords.length<=1?2:1;
+    // Require ALL nameWords to appear in the matched street (score >= nameWords.length)
+    // "mee hoon" → nameWords=["MEE","HOON"] → needs score 2 → "ENG HOON ST" scores 1 → REJECT
+    // "teck whye" → nameWords=["TECK","WHYE"] → needs score 2 → "TECK WHYE AVE" scores 2 → ACCEPT
+    const _minScore=nameWords.length;
     if(sc.length&&sc[0].score>=_minScore){m=DB.resale.filter(r=>r.street_name===sc[0].street);if(m.length)return _srResult(m);}
   }
 
@@ -7196,7 +7198,7 @@ function harveyChitChat(raw, convCtx){
   }
 
   // ── GAMING ──
-  if(m(/gaming|gamer|pc gaming|console gaming|ps5|xbox|nintendo|steam|valorant|cs.*go|dota|league.*legends|lol\b|minecraft|streaming.*game|twitch|esports|gaming.*setup|gaming.*chair|ultrawide/)){
+  if(m(/gaming|gamer|pc gaming|console gaming|ps5|xbox|nintendo|steam|valorant|cs.*go|dota|league.*legends|league of legends|minecraft|streaming.*game|twitch|esports|gaming.*setup|gaming.*chair|ultrawide/)){
     return withCtx(r(
       `The gaming setup, sir — monitors, RGB peripherals, a chair that costs more than some flat furnishings, and a fibre connection that is genuinely non-negotiable. For Singapore gamers, the flat requirements are clear: dedicated desk space, cable management, and ideally a room that can be climate-controlled without affecting the rest of the household. A 4-room or 5-room with a study room is the gaming lifestyle enabler. Fibre broadband is available island-wide, but building infrastructure varies. What area are you considering?`,
       `The gamer's flat brief, sir: dedicated room, fast internet, climate control, soundproofing optional but appreciated. Singapore's fibre network is excellent across all HDB estates. The setup matters though — a study room or converted bedroom is the difference between a desk in the corner and a proper station. What flat type and area are you looking at?`
@@ -7662,6 +7664,7 @@ const EMOTION_JOINS = {
 
   // ── JOY / HAPPINESS ──
   joy: [
+    'lol','haha','hehe','lmao','rofl','omg','wow','yay','woo','yes','yep','yeah','yea','nice','cool','great','awesome','amazing','fantastic','wonderful','brilliant','excellent','superb','perfect','lovely','delightful',
     // English high
     'bliss','blissful','ecstasy','ecstatic','euphoria','euphoric','jubilation','jubilant',
     'rapture','rapturous','elated','elation','overjoyed','thrilled','exhilarated','exhilaration',
@@ -8789,17 +8792,19 @@ const UNIVERSAL_WORDS = {
   hojicha:    'joy',    matcha:  'joy',    sencha:  'joy',    oolong: 'joy',
   puerh:      'joy',    rooibos: 'joy',    chamomile:'joy',   tisane: 'joy',
   // Food vocab — single words that should trigger joy/chitchat not hallucination
-  chick:      'joy',    chicken: 'joy',    duck:    'joy',    pork:    'joy',
-  mee:        'joy',    hoon:    'joy',    kuay:    'joy',    teow:   'joy',
-  wanton:     'joy',    dumpling:'joy',    porridge:'joy',    congee: 'joy',
-  curry:      'joy',    biryani: 'joy',    mutton:  'joy',    tofu:   'joy',
-  beef:       'joy',    fish:    'joy',    prawn:   'joy',    crab:    'joy',
-  rice:       'joy',    noodle:  'joy',    bread:   'joy',    cake:    'joy',
+  chick:      'food',    chicken: 'food',    duck:    'food',    pork:    'food',
+  mee:        'food',    hoon:    'food',    kuay:    'food',    teow:   'food',
+  wanton:     'joy',    dumpling:'joy',    porridge:'joy',    congee: 'food',
+  curry:      'food',    biryani: 'food',    mutton:  'joy',    tofu:   'food',
+  beef:       'joy',    fish:    'food',    prawn:   'food',    crab:    'food',
+  rice:       'joy',    noodle:  'joy',    bread:   'food',    cake:    'food',
   // Food vocab
-  ramen:      'joy',    sashimi: 'joy',    omakase: 'joy',    wagyu:  'joy',
-  laksa:      'joy',    satay:   'joy',    rendang: 'joy',    nasi:   'joy',
+  ramen:      'food',    sashimi: 'food',    omakase: 'food',    wagyu:  'joy',
+  laksa:      'food',    satay:   'food',    rendang: 'food',    nasi:   'food',
   // Art / creativity vocab
-  art:        'anticipation', design:  'anticipation', creative:'anticipation',
+  art:        'anticipation',
+  lol:        'joy',    haha:    'joy',    hehe:    'joy',    omg:    'surprise',
+  wow:        'surprise', yay:   'joy',    woo:     'joy', design:  'anticipation', creative:'anticipation',
   craft:      'anticipation', style:   'joy',    aesthetic:'joy',   beauty: 'love',
   music:      'joy',    melody:  'joy',    rhythm:  'joy',    beat:   'joy',
   // Work
@@ -8814,6 +8819,13 @@ const UNIVERSAL_WORDS = {
 
 // Universal Jarvis responses per emotion → then HDB redirect
 const UNIVERSAL_REPLIES = {
+  food: [
+    `Hawker culture, sir — Singapore's most egalitarian institution. Every flat within walking distance of a good hawker centre commands an unspoken premium. Which area are you considering?`,
+    `Food first, then property — an entirely rational priority, sir. The estate you choose determines your hawker options for the next decade. Shall we look at what's transacting nearby?`,
+    `The Singapore food conversation never gets old, sir. A flat near Maxwell, Old Airport Road, or Bedok Interchange is a flat near a cultural institution. What area suits your taste?`,
+    `A subject close to every Singaporean heart, sir. The good news is that proximity to excellent food is actually a measurable property criterion. What area are you considering?`,
+    `Noted, sir. The kopitiam, the hawker centre, the zi char stall — these are infrastructure, not amenities. Where are we looking?`,
+  ],
   joy: [
     `I appreciate the positivity, sir. Shall we put that energy to work? The data is loaded and ready.`,
     `Noted with pleasure, sir. The property market rewards optimism when it's backed by information. Shall we look?`,
