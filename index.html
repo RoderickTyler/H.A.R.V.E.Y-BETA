@@ -2145,7 +2145,9 @@ function reverseStreet(streetRaw){
       if(score>0)sc.push({score,street:r.street_name});
     }
     sc.sort((a,b)=>b.score-a.score);
-    if(sc.length){m=DB.resale.filter(r=>r.street_name===sc[0].street);if(m.length)return _srResult(m);}
+    // Require score >= 2 for short inputs (1 word) to avoid "hoon" matching "ENG HOON ST"
+    const _minScore=nameWords.length<=1?2:1;
+    if(sc.length&&sc[0].score>=_minScore){m=DB.resale.filter(r=>r.street_name===sc[0].street);if(m.length)return _srResult(m);}
   }
 
   // S3: fuzzy (1-char typo) with same hard constraints
@@ -2252,7 +2254,12 @@ function parseQuery(raw){
       .replace(/\b\d+\s*(?:ROOM|RM|SQM|M2)\b/g,'')
       .replace(/\b(?:EXECUTIVE|EXEC|ESTIMATE|VALUE|SEARCH|RECENT|FIND|SHOW)\b/g,'')
       .replace(/\s+/g,' ').trim();
-    if(streetCandidate.length>4&&DB.loaded){
+    // ── Stricter street matching guard ──
+    // Require street type suffix OR length >= 8 for reverseStreet to fire
+    // Prevents "hoon", "mee", "art", "chick" from matching random street fragments
+    const _hasStreetType=/(ST|AVE|DR|RD|CL|CRES|LOR|JLN|LANE|WAY|WALK|RISE|VIEW|LINK|GDNS|TER|PLACE|GROVE|COURT|HEIGHTS|ROAD|STREET|AVENUE|DRIVE|CRESCENT|CLOSE|TERRACE|GARDENS)/i.test(streetCandidate);
+    const _streetLongEnough=streetCandidate.trim().split(/\s+/).length>=2&&streetCandidate.replace(/\s/g,'').length>=6;
+    if(streetCandidate.length>4&&DB.loaded&&(_hasStreetType||_streetLongEnough)){
       const found=reverseStreet(streetCandidate);
       if(found){
         if(found._noTxn){
@@ -8783,6 +8790,9 @@ const UNIVERSAL_WORDS = {
   puerh:      'joy',    rooibos: 'joy',    chamomile:'joy',   tisane: 'joy',
   // Food vocab — single words that should trigger joy/chitchat not hallucination
   chick:      'joy',    chicken: 'joy',    duck:    'joy',    pork:    'joy',
+  mee:        'joy',    hoon:    'joy',    kuay:    'joy',    teow:   'joy',
+  wanton:     'joy',    dumpling:'joy',    porridge:'joy',    congee: 'joy',
+  curry:      'joy',    biryani: 'joy',    mutton:  'joy',    tofu:   'joy',
   beef:       'joy',    fish:    'joy',    prawn:   'joy',    crab:    'joy',
   rice:       'joy',    noodle:  'joy',    bread:   'joy',    cake:    'joy',
   // Food vocab
