@@ -5784,6 +5784,58 @@ function harveyChitChat(raw, convCtx){
     ));
   }
 
+  // ── CHICK context-aware: lady/dating vs food vs exotic pet ──
+  if(m(/\bchick(?:s)?\b/i) && m(/girl|lady|ladies|date|dating|single|cute|hot|pretty|meet|approach/i)){
+    return withCtx(r(
+      `The social pursuit, sir — I respect the ambition. A well-located flat near lively F&B corridors and lifestyle amenities improves one's social calendar considerably. Tiong Bahru, Tanjong Pagar, Holland Village, Katong — the correlation is well-documented in the data.`,
+      `The dating chapter, sir — a fine one. A well-chosen flat projects quiet confidence. Which estate are we working with?`,
+      `Social life and flat location are more correlated than people admit, sir. F&B-dense corridors, good MRT connectivity, a flat you're proud of — these things compound. Where are we looking?`,
+    ));
+  }
+
+  if(m(/\bchick(?:s)?\b/i) && m(/pet|bird|parrot|exotic|illegal/i)){
+    return withCtx(r(
+      `Exotic pets and HDB, sir — a grey area worth navigating carefully. Birds require AVS licensing. Reptiles and exotic species are generally not permitted. Enforcement is complaint-driven, so the estate culture matters as much as the rules. Which area were you considering?`,
+      `The exotic pet question, sir — I'll be direct. HDB permits most small domesticated animals; exotic birds and non-domesticated species require licensing or are prohibited. If this is a priority, estate selection matters. Want me to pull data for a suitable area?`,
+    ));
+  }
+
+  // ── PETS / ANIMAL LOVERS ──
+  if(m(/\bpet(?:s)?\b|\bdog(?:s)?\b|\bcat(?:s)?\b|\bhamster|\brabbit|guinea pig|pet.*hdb|hdb.*pet|pet.*friendly|dog.*walk|cat.*hdb/)){
+    return withCtx(r(
+      `The pet question in HDB living, sir — one that affects flat selection more than most people plan for. Dogs are permitted with approval — one per flat, no large breeds above 15kg. Cats are officially not permitted but widely tolerated. Ground-floor units, park-proximate estates, and estates with dedicated dog run facilities are genuinely more pet-friendly in practice. Which animal are we working around?`,
+      `A pet household, sir — a legitimate flat-selection criterion. Ground floor units give direct outdoor access for dogs. Park connector proximity means morning walks are genuinely pleasant. Estates near Bishan-AMK Park, East Coast, and Punggol Waterway are worth a look. What kind of pet are we optimising for?`,
+      `The pet-friendly flat search, sir. For dogs: HDB approval required, small breeds only, ground floor preferred. For cats: officially not permitted, practically tolerated, enforcement complaint-driven. Estate culture matters enormously — some neighbourhoods are far more pet-friendly in practice than the rules suggest. What area are you considering?`,
+    ));
+  }
+
+  // ── BIODIVERSITY / NATURE / ANIMAL WELFARE ──
+  if(m(/biodiversity|wildlife.*sg|singapore.*wildlife|animal.*activist|animal.*welfare|spca|stray.*cat|community.*cat|cat.*feeder|bird.*watch|nature.*lover|flora.*fauna|sungei.*buloh|pulau.*ubin|night.*safari/)){
+    return withCtx(r(
+      `Singapore's biodiversity story is remarkable, sir — Sungei Buloh, the Central Catchment, Pulau Ubin, the PCN network. The estate you choose determines how close you live to this infrastructure. The morning soundscape near Bishan Park or MacRitchie is genuinely different from a corridor estate. Which area calls to you?`,
+      `The nature and wildlife perspective, sir — one that adds real depth to flat selection. Estates adjacent to the Central Nature Reserve, Bukit Timah, and the reservoir parks are different in character from commercial corridors. If biodiversity matters to your quality of life, I can pull transactions for the estates that best deliver it. Shall we?`,
+      `Animal welfare in Singapore, sir — community cat programmes, SPCA, AVS licensing. These reflect the estate culture and community character of a neighbourhood. Estates with active, organised resident communities handle animal welfare better in practice. Which area are you considering?`,
+    ));
+  }
+
+  // ── CHICKEN RICE / FOODIE DEEP ──
+  if(m(/chicken rice|hainanese chicken|roast.*chicken|ayam penyet|chicken chop|nasi ayam|chicken.*rice.*singapore|best.*chicken rice/)){
+    return withCtx(r(
+      `Chicken rice, sir — Tian Tian at Maxwell, Boon Tong Kee on Killiney, the Liao Fan stall that earned its Michelin star honestly. The poached versus roast debate is unresolvable, which is exactly as it should be. A flat near a legitimate chicken rice institution is a flat with measurably higher morning quality. Which area suits your rice preferences?`,
+      `The chicken rice question, sir — Singapore's national dish distilled into one plate. Hainanese steamed chicken, fragrant rice cooked in chicken stock, dark soy, chilli, ginger. Deceptively simple. The estates around Maxwell, Toa Payoh, and Bedok have the deepest traditions and strong resale volumes to match. Shall we look?`,
+      `A connoisseur, sir. The good news is that Singapore's mature estates preserve the best chicken rice traditions — and those estates also have strong transaction data. Shall we look at what's available in the areas with the best food culture?`,
+    ));
+  }
+
+  // ── DATING / SINGLE PHASE ──
+  if(m(/\bsingle(?!.*malt|.*origin|.*inferno|.*room)\b|\bdating app\b|\btinder\b|\bbumble\b|first.*date|looking.*for.*love|\bbachelor(?:ette)?\b|\bliving.*alone\b/)){
+    return withCtx(r(
+      `The single chapter, sir — in Singapore property terms, one of the more interesting ones. The singles scheme allows resale purchase on the open market at any age, any size. A well-chosen 3-room in a connected estate gives you independence without sacrificing asset value. Tanjong Pagar, Tiong Bahru, Holland Village, Katong — strong single-buyer demand. What kind of living environment suits you?`,
+      `Flying solo, sir — a legitimate and increasingly common flat-buying scenario. The resale market gives singles full access: any flat type, any town, no waiting. Key variables: commute to work, proximity to social life, and a smaller flat that punches above its weight in location. Which part of the island are you working from?`,
+      `The single-buyer calculus, sir — proximity to work, proximity to the social life you want, and an asset that holds value. A 3-room in a mature estate near an MRT interchange hits all three. What matters most to you in a flat?`,
+    ));
+  }
+
   // NEIGHBOURHOOD first-level
   if(m(/neighbourhood.*nice|nice.*neighbourhood|best.*area|recommend.*area|where.*live.*singapore|nice.*area.*sg|which.*estate/)){
     return withCtx(r(
