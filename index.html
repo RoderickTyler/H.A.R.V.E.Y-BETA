@@ -3487,7 +3487,30 @@ async function handleStreetOnly(street, ctx){
   await new Promise(r=>setTimeout(r,200));
   // Canonicalise first — handles "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1"
   const _canonInput=canonicalStreet(street);
-  const found=reverseStreet(_canonInput||street);
+  // Fast DB prefix-match: if canonicalStreet resolved it, use that
+  // If not, do a fast O(n) scan on first 2 words for quick candidate
+  let found=reverseStreet(_canonInput||street);
+  if(!found&&_canonInput&&DB.loaded){
+    // Fallback: scan DB for streets containing ALL significant words from input
+    const _words=_canonInput.toUpperCase().replace(/\d+[A-Z]?/g,'').split(/\s+/)
+      .filter(w=>w.length>=4&&!/^(ST|AVE|RD|DR|CL|CRES|LOR|JLN|BT|UPP|GDNS)$/.test(w));
+    if(_words.length>=1){
+      const _seen=new Set();
+      const _candidates=DB.resale.filter(r=>{
+        if(!r.street_name||_seen.has(r.street_name))return false;
+        _seen.add(r.street_name);
+        const up=r.street_name.toUpperCase();
+        return _words.every(w=>up.includes(w));
+      });
+      if(_candidates.length===1||(_candidates.length>0&&_words.length>=2)){
+        // Use most-transacted candidate
+        const _best=_candidates.reduce((a,b)=>
+          DB.resale.filter(r=>r.street_name===a.street_name).length>=
+          DB.resale.filter(r=>r.street_name===b.street_name).length?a:b);
+        found=reverseStreet(_best.street_name)||{street:_best.street_name,town:_best.town,blocks:[]};
+      }
+    }
+  }
   rmThinking();
 
   if(!found){
@@ -3702,34 +3725,79 @@ function clearWorkingCtx(){
 // Solves: #7 wrong field name, #8 astute misfires, precision mode, sidetrack recovery
 // ══════════════════════════════════════════════════════
 let harveyPersona = {
-  mode: 'standard',      // standard | serious | precision | recovery | energised
-  userArchetype: null,   // analyst | casual | first_timer | repeat
-  trustLevel: 0,         // 0-5, builds with turns
-  emotionHistory: [],    // last 3 emotions
-  meticulous: false,     // precision user detected
+  mode: 'standard',          // standard | serious | precision | recovery | energised
+  userArchetype: null,       // analyst | casual | data_first | chatty | frustrated
+  trustLevel: 0,             // 0-5, builds with turns
+  emotionHistory: [],        // last 5 emotions
+  meticulous: false,         // precision user detected
   turnCount: 0,
+  // Conversation style tracking
+  turnHistory: [],           // last 10 turn types: 'data'|'chat'|'ambig'|'emotion'|'praise'
+  conversationStyle: 'balanced', // chatty | data_first | half_half | frustrated | balanced
+  chatRatio: 0,              // 0-1: fraction of last 10 turns that were non-data
+  _precisionAcked: false,
 };
 
 function updatePersona(raw, intent){
   harveyPersona.turnCount++;
   harveyPersona.trustLevel = Math.min(5, Math.floor(harveyPersona.turnCount / 3));
 
-  // Detect meticulous/precision user
+  // ── Track turn type ──
+  const _tt = intent.type===INTENT.DATA_QUERY   ? 'data'   :
+              intent.type===INTENT.PRAISE        ? 'praise' :
+              intent.type===INTENT.EMOTIONAL     ? 'emotion':
+              intent.type===INTENT.CHITCHAT      ? 'chat'   :
+              intent.type===INTENT.AMBIGUOUS     ? 'ambig'  : 'chat';
+  harveyPersona.turnHistory.push(_tt);
+  if(harveyPersona.turnHistory.length > 10) harveyPersona.turnHistory.shift();
+
+  // ── Compute chatRatio (non-data turns / total last 10) ──
+  const _last = harveyPersona.turnHistory;
+  harveyPersona.chatRatio = _last.length
+    ? _last.filter(t=>t!=='data').length / _last.length : 0;
+
+  // ── Classify conversationStyle ──
+  const _ambigRatio   = _last.filter(t=>t==='ambig').length / Math.max(_last.length,1);
+  const _emotionCount = _last.filter(t=>t==='emotion').length;
+  const _dataCount    = _last.filter(t=>t==='data').length;
+  const _chatCount    = _last.filter(t=>t==='chat'||t==='ambig'||t==='praise').length;
+
+  if(_emotionCount >= 2 && _dataCount === 0)
+    harveyPersona.conversationStyle = 'frustrated';
+  else if(_ambigRatio > 0.4 && _dataCount >= 1)
+    harveyPersona.conversationStyle = 'half_half';           // ambig+data = half_half beats chatty
+  else if(harveyPersona.chatRatio > 0.7 && _last.length >= 4)
+    harveyPersona.conversationStyle = 'chatty';
+  else if(harveyPersona.chatRatio < 0.25 && _last.length >= 3)
+    harveyPersona.conversationStyle = 'data_first';
+  else
+    harveyPersona.conversationStyle = 'balanced';
+
+  // ── Detect meticulous/precision user ──
   if(/\b(psf|yield|irr|roi|capitalisation|standard deviation|per annum|net present|cash flow|amortis|depreciat|variance|quartile|percentile|basis point|nominal|annualised|compound|liquidity|arbitrage)\b/i.test(raw)){
     harveyPersona.meticulous = true;
     harveyPersona.userArchetype = 'analyst';
   }
 
-  // Detect frustration — multiple unknowns or repairs in a row
-  const recentFrustration = harveyPersona.emotionHistory.slice(-3).filter(e=>e==='anger'||e==='unknown').length;
-  if(recentFrustration >= 2) harveyPersona.mode = 'serious';
-  else if(intent.type === INTENT.PRAISE) harveyPersona.mode = 'energised';
-  else if(harveyPersona.mode !== 'precision') harveyPersona.mode = 'standard';
+  // ── Detect archetype from conversation style ──
+  if(!harveyPersona.meticulous){
+    if(harveyPersona.conversationStyle==='chatty')       harveyPersona.userArchetype='casual';
+    else if(harveyPersona.conversationStyle==='data_first') harveyPersona.userArchetype='data_first';
+    else if(harveyPersona.conversationStyle==='frustrated') harveyPersona.userArchetype='frustrated';
+    else if(harveyPersona.conversationStyle==='half_half')  harveyPersona.userArchetype='half_half';
+  }
 
-  if(harveyPersona.meticulous) harveyPersona.mode = 'precision';
+  // ── Set mode from style + emotion history ──
+  const _recentFrustration = harveyPersona.emotionHistory.slice(-3).filter(e=>e==='anger'||e==='unknown').length;
+  if(harveyPersona.meticulous)                      harveyPersona.mode='precision';
+  else if(_recentFrustration >= 2)                  harveyPersona.mode='serious';
+  else if(harveyPersona.conversationStyle==='frustrated') harveyPersona.mode='serious';
+  else if(intent.type===INTENT.PRAISE)              harveyPersona.mode='energised';
+  else if(harveyPersona.mode!=='precision')         harveyPersona.mode='standard';
 
-  if(intent.type === INTENT.EMOTIONAL) harveyPersona.emotionHistory.push(intent.subtype);
-  if(intent.type === INTENT.UNKNOWN)   harveyPersona.emotionHistory.push('unknown');
+  // ── Track emotion history ──
+  if(intent.type===INTENT.EMOTIONAL) harveyPersona.emotionHistory.push(intent.subtype||'emotional');
+  if(intent.type===INTENT.UNKNOWN)   harveyPersona.emotionHistory.push('unknown');
   if(harveyPersona.emotionHistory.length > 5) harveyPersona.emotionHistory.shift();
 }
 
@@ -3746,10 +3814,25 @@ function precisionAck(){
 function sidetrackRecovery(){
   const topic = workingCtx.sidetrackTopic || 'our conversation';
   const where = workingCtx.streetCtx || workingCtx.townCtx || 'your search';
+  const _st = harveyPersona.conversationStyle;
+  if(_st==='chatty'){
+    return rand([
+      `I've thoroughly enjoyed this detour, sir — but ${where} is still waiting patiently. Shall we?`,
+      `Ha — we do go on, don't we. ${where} is still loaded. One click and we're back.`,
+      `Splendid conversation as always — and ${where} hasn't gone anywhere. Back to it?`,
+    ]);
+  }
+  if(_st==='frustrated'||_st==='serious'){
+    return rand([
+      `Back to ${where}, sir. Shall we continue?`,
+      `Right — ${where}. Ready when you are.`,
+      `I have ${where} ready, sir. Let's pick this up.`,
+    ]);
+  }
   return rand([
-    `Ha — I notice we have wandered, sir. The ${topic} does that to me. I confess I malfunction slightly when distracted. Where were we — ${where}? Shall we pick that up?`,
-    `Sir, I believe we have sidetracked considerably. My memory is usually excellent — it is the chit chat that scrambles me. We were on ${where}, if I recall correctly. Shall we?`,
-    `A delightful detour, sir — but I notice we have drifted from ${where}. I apologise for the inconvenience. Shall I guide us back?`,
+    `Ha — I notice we have wandered, sir. The ${topic} does that to me. Where were we — ${where}? Shall we pick that up?`,
+    `My memory is excellent — it is the chit chat that scrambles me occasionally. We were on ${where}, if I recall. Shall we?`,
+    `A delightful detour, sir — but I notice we have drifted from ${where}. Shall I guide us back?`,
   ]);
 }
 
@@ -3760,16 +3843,31 @@ function sidetrackRecovery(){
 function canonicalStreet(raw){
   if(!raw) return raw;
   const lower = raw.toLowerCase().trim();
-  // 1. Direct lookup in STREET_SHORTFORMS (static + dynamic built at load time)
+  // 1. Direct lookup in STREET_SHORTFORMS
   if(STREET_SHORTFORMS[lower]) return STREET_SHORTFORMS[lower];
   const up = raw.toUpperCase().trim();
-  if(!DB||!DB.loaded) return up;
-  // 2. Already canonical — check exact DB match
+  // 2. Try expanding abbreviated directionals: WST→WEST, NTH→NORTH etc
+  // This catches "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1" even before DB loads
+  const _expanded = up
+    .replace(/\bWST\b/g,'WEST').replace(/\bNTH\b/g,'NORTH')
+    .replace(/\bSTH\b/g,'SOUTH').replace(/\bCTRL\b/g,'CENTRAL');
+  if(_expanded !== up){
+    if(STREET_SHORTFORMS[_expanded.toLowerCase()]) return STREET_SHORTFORMS[_expanded.toLowerCase()];
+  }
+  // 3. Try contracting full directionals: WEST→WST etc (in case DB uses abbreviated)
+  const _contracted = up
+    .replace(/\bWEST\b/g,'WST').replace(/\bNORTH\b/g,'NTH')
+    .replace(/\bSOUTH\b/g,'STH').replace(/\bCENTRAL\b/g,'CTRL');
+  if(_contracted !== up && STREET_SHORTFORMS[_contracted.toLowerCase()])
+    return STREET_SHORTFORMS[_contracted.toLowerCase()];
+  if(!DB||!DB.loaded) return _expanded !== up ? _expanded : up;
+  // 4. Exact DB match
   if(DB.resale.some(r=>r.street_name&&r.street_name.toUpperCase()===up)) return up;
-  // 3. Use reverseStreet scoring to find canonical
+  if(_expanded!==up && DB.resale.some(r=>r.street_name&&r.street_name.toUpperCase()===_expanded)) return _expanded;
+  // 5. reverseStreet scoring
   const found = reverseStreet(raw);
   if(found&&found.street) return found.street;
-  return up;
+  return _expanded !== up ? _expanded : up;
 }
 
 async function _handleInputInner(raw){
@@ -3818,7 +3916,7 @@ async function _handleInputInner(raw){
 
   // ── Option C: Debug overlay ──
   // ── CONTINUE chip handler — resume last search/EV ──
-  if(/^(continue|ok lets continue|lets continue|resume|carry on|yes continue|go on|back to it)$/i.test(raw.trim())||raw==='continue'){
+  if(/^(?:(?:then|ok|right|alright|so|yeah|yea|sure|please|lah)\s+)?(?:continue|lets continue|carry on|go on|resume|back to it|proceed|yes please|go ahead)(?:\s+(?:lah|please|sir))?$/i.test(raw.trim())){
     const _resumeStreet=workingCtx.streetCtx||convCtx.street;
     const _resumeTown=workingCtx.townCtx||convCtx.town;
     const _resumeTask=workingCtx.task;
@@ -3842,6 +3940,9 @@ async function _handleInputInner(raw){
   if(raw==='__debug__'||raw==='debug'){
     const _dbState={
       mode, workingCtx, harveyPersona,
+      convStyle:harveyPersona.conversationStyle,
+      chatRatio:Math.round(harveyPersona.chatRatio*100)+'%',
+      turnHistory:harveyPersona.turnHistory.join(','),
       convCtx:{town:convCtx.town,street:convCtx.street,block:convCtx.block},
       ctx:{town:ctx.town,street:ctx.street,block:ctx.block,floor:ctx.floor,flatType:ctx.flatType},
       intent:_intent,
@@ -4671,11 +4772,27 @@ async function _handleInputInner(raw){
     ]:[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}];
 
     let _unknownReply;
+    const _style = harveyPersona.conversationStyle;
     if(_isMidTask&&_where){
+      // Mid-task: always redirect back to the work
       _unknownReply=rand([
         `Not entirely sure what that was, sir — but I have ${String(_where).toUpperCase()} loaded and ready. Shall we continue?`,
         `That one's beyond my vocabulary, sir. I'll pretend it didn't happen — we were on ${String(_where).toUpperCase()}, yes?`,
-        `Harvey processes 52,894 transactions fluently, sir. That input, however, is not among them. Back to ${String(_where).toUpperCase()}?`,
+        `Harvey processes 52,894 transactions fluently. That input is not among them. Back to ${String(_where).toUpperCase()}?`,
+      ]);
+    } else if(_style==='chatty'){
+      // Chatty user — lean in, keep it light
+      _unknownReply=rand([
+        `Ha — you've stumped me, sir, which takes some doing. I'm all ears though. What are we after?`,
+        `Not quite in my vocabulary, that one. But I like the energy. What are we looking up?`,
+        `I'll admit defeat on that one, sir. Shall we find something I'm actually good at?`,
+      ]);
+    } else if(_style==='frustrated'||_style==='serious'){
+      // Frustrated user — be direct, no jokes
+      _unknownReply=rand([
+        `I didn't catch that, sir. A town, street, or block number will get us going immediately.`,
+        `Not registering that input, sir. Type a town like Clementi or Tampines and I'll pull the data.`,
+        `Let's try again, sir. A location — town, street, or block — and I can help right away.`,
       ]);
     } else {
       _unknownReply=rand([
@@ -4689,7 +4806,11 @@ async function _handleInputInner(raw){
     loading=false;sbEl.disabled=false;return;
   }
 
-  if(ctx.town||ctx.street||ctx.block||/transact|search|recent|sales?|sold|show|find/i.test(raw)){
+  // Final data gate: only fire if the CURRENT input had data signals
+  // Prevents "then lets continue" firing Bukit Merah just because ctx inherits convCtx
+  const _currentHasData=!!(parsed.town||parsed.street||parsed.block||
+    /transact|search|recent|sales?|sold|show|find/i.test(raw));
+  if(_currentHasData&&(ctx.town||ctx.street||ctx.block)){
     // Fix #10: restore working context before search
     restoreWorkingCtx(ctx);
     const sentResult=harveyKnows.sentiment(raw);
@@ -4812,6 +4933,35 @@ async function _handleInputInner(raw){
     harveyMsg(harveyKnows.quip(raw,oosResult),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
     speak(`That one's a little outside my territory, sir. Let me point you to someone who can help.`);
     mode='menu';return;
+  }
+
+  // ── AMBIGUOUS/UNKNOWN — witty handler before harveyAttempt ──
+  if(_intent.type===INTENT.AMBIGUOUS||(_intent.type===INTENT.UNKNOWN&&!/_intent.subtype==='gibberish'/.test(''))){
+    const _hasPrev=!!(convCtx.town||convCtx.street||workingCtx.streetCtx);
+    const _prevRef=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+    let _ambReply;
+    if(/^(test|testing|test test|hello|hi|hey|yo|ping|check|is this on|anyone there|harvey\?)$/i.test(raw.trim())){
+      _ambReply=rand([
+        `All systems operational, sir. 52,894 transactions indexed and ready. Town, street, or block?`,
+        `Harvey is here, sir — fully calibrated. No need to test. What are we searching?`,
+        `No need to test, sir. I am always ready. What would you like to know?`,
+        `Present and accounted for, sir. What's the mission?`,
+      ]);
+    } else if(_hasPrev){
+      _ambReply=rand([
+        `I didn't quite catch that, sir — but I have ${String(_prevRef).toUpperCase()} from our last search. Shall we continue there?`,
+        `That one's a little unclear, sir. Were you referring to ${String(_prevRef).toUpperCase()}? Or shall we try something else?`,
+      ]);
+    } else {
+      _ambReply=rand([
+        `I didn't catch that, sir. A town, street, or block number will get us started right away.`,
+        `Could you clarify, sir? A location — Clementi, Tampines, a block number — and I'll pull the data.`,
+        `Harvey processes 52,894 transactions fluently, sir. That input, however, is not among them. A location?`,
+      ]);
+    }
+    harveyMsg(_ambReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+    speak(_ambReply.replace(/<[^>]*>/g,'').slice(0,180));
+    mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
   await harveyAttempt(raw);
@@ -8902,6 +9052,8 @@ const UNIVERSAL_WORDS = {
   unsure:     'vulnerable', uncertain:'vulnerable', dunno:'vulnerable',
   hmm:        'vulnerable', hm:    'vulnerable', huh:   'surprise',
 
+  test:       'anticipation', testing:'anticipation', hello:  'anticipation',
+  hi:         'anticipation', hey:    'anticipation', yo:     'anticipation',
   wow:        'surprise', whoa:   'surprise', wah:    'surprise',
   really:     'surprise', seriously:'surprise', wait:  'surprise',
   interesting:'surprise', haha:   'joy',    lol:    'joy',
