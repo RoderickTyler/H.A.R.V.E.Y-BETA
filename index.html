@@ -672,7 +672,7 @@ let convCtx={};
 function mergeToConvCtx(parsed){
   if(parsed.town)     convCtx.town=parsed.town;
   if(parsed.flatType) convCtx.flatType=parsed.flatType;
-  if(parsed.street)   convCtx.street=parsed.street;
+  if(parsed.street)   convCtx.street=canonicalStreet(parsed.street);
   if(parsed.block)    convCtx.block=parsed.block;
   if(parsed.floor)    convCtx.floor=parsed.floor;
   if(parsed.size)     convCtx.size=parsed.size;
@@ -685,7 +685,7 @@ function applyConvCtx(parsed){
   const merged={...convCtx};
   if(parsed.town)     merged.town=parsed.town;
   if(parsed.flatType) merged.flatType=parsed.flatType;
-  if(parsed.street)   merged.street=parsed.street;
+  if(parsed.street)   merged.street=canonicalStreet(parsed.street);
   if(parsed.block)    merged.block=parsed.block;
   if(parsed.floor!==undefined&&parsed.floor) merged.floor=parsed.floor;
   if(parsed.size)     merged.size=parsed.size;
@@ -2257,6 +2257,8 @@ function parseQuery(raw){
 
 
 function enrichCtx(ctx){
+  // Always canonicalise street before any lookup
+  if(ctx.street) ctx.street=canonicalStreet(ctx.street);
   if(ctx.street&&!ctx.town){
     const f=reverseStreet(ctx.street);
     if(f){ctx.town=f.town;ctx.street=f.street;if(!ctx.block&&f.blocks.length===1)ctx.block=f.blocks[0];}
@@ -3460,8 +3462,9 @@ async function handleStreetOnly(street, ctx){
   loading=true;sbEl.disabled=true;
   thinkingMsg();
   await new Promise(r=>setTimeout(r,200));
-
-  const found=reverseStreet(street);
+  // Canonicalise first — handles "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1"
+  const _canonInput=canonicalStreet(street);
+  const found=reverseStreet(_canonInput||street);
   rmThinking();
 
   if(!found){
@@ -3645,7 +3648,7 @@ let workingCtx = {
 };
 
 function saveWorkingCtx(ctx, taskMode){
-  if(ctx.street) workingCtx.streetCtx = ctx.street;
+  if(ctx.street) workingCtx.streetCtx = canonicalStreet(ctx.street);
   if(ctx.town)   workingCtx.townCtx   = ctx.town;
   if(ctx.block)  workingCtx.blockCtx  = ctx.block;
   if(taskMode)   workingCtx.task      = taskMode;
@@ -3717,6 +3720,25 @@ function sidetrackRecovery(){
     `Sir, I believe we have sidetracked considerably. My memory is usually excellent — it is the chit chat that scrambles me. We were on ${where}, if I recall correctly. Shall we?`,
     `A delightful detour, sir — but I notice we have drifted from ${where}. I apologise for the inconvenience. Shall I guide us back?`,
   ]);
+}
+
+// ══ CANONICAL STREET RESOLVER ══
+// Resolves any abbreviated/typed street name to the exact DB form
+// e.g. "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1" (how DB stores it)
+// Call at EVERY ctx.street/convCtx.street write point
+function canonicalStreet(raw){
+  if(!raw||!DB||!DB.loaded) return raw;
+  // 1. Direct lookup in STREET_SHORTFORMS (built at load time, O(1))
+  const lower = raw.toLowerCase().trim();
+  if(STREET_SHORTFORMS[lower]) return STREET_SHORTFORMS[lower];
+  // 2. Already canonical — check exact DB match
+  const up = raw.toUpperCase().trim();
+  if(DB.resale.some(r=>r.street_name&&r.street_name.toUpperCase()===up)) return up;
+  // 3. Use reverseStreet scoring to find canonical
+  const found = reverseStreet(raw);
+  if(found&&found.street) return found.street;
+  // 4. Fallback — return as-is
+  return raw;
 }
 
 async function _handleInputInner(raw){
@@ -3942,7 +3964,7 @@ async function _handleInputInner(raw){
     const p=parseQuery(normalizeSpeech(raw));
     if(p.town)     ctx.town=p.town;
     if(p.flatType) ctx.flatType=p.flatType;
-    if(p.street)   ctx.street=p.street;
+    if(p.street)   ctx.street=canonicalStreet(p.street);
     if(p.block)    ctx.block=p.block;
     if(p.floor)    ctx.floor=p.floor;
     if(p.size){    ctx.size=p.size;ctx.sizeInferred=false;ctx.sizeFromDB=false;}
@@ -4712,7 +4734,7 @@ async function _handleInputInner(raw){
     }else if(blockInfo&&blockInfo.locations.length===1){
       ctx.town=blockInfo.locations[0].town;
       ctx.street=blockInfo.locations[0].street;
-      convCtx.town=ctx.town;convCtx.street=ctx.street;
+      convCtx.town=ctx.town;convCtx.street=ctx.street?canonicalStreet(ctx.street):ctx.street;
     }
   }
 
