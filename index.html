@@ -788,6 +788,29 @@ async function loadData(){
     const sd=parseCSV(await r2.text());
     sd.forEach(row=>{if(row.town&&row.streets)DB.townStreets[row.town]=row.streets.split('|').filter(Boolean).sort();});
     DB.loaded=true;
+    // Auto-register directional street variants in STREET_SHORTFORMS for instant lookup
+    // Fixes "clementi west street 1" not resolving — registers all WEST/NTH/ST variants
+    (()=>{
+      const _sf=STREET_SHORTFORMS;
+      const _seen=new Set();
+      for(const r of DB.resale){
+        if(!r.street_name||_seen.has(r.street_name))continue;
+        _seen.add(r.street_name);
+        const up=r.street_name.toUpperCase();
+        // Register contracted directionals: WEST→WST, NORTH→NTH etc
+        const contracted=up.replace(/\bWEST\b/g,'WST').replace(/\bNORTH\b/g,'NTH')
+          .replace(/\bSOUTH\b/g,'STH').replace(/\bEAST\b/g,'EST').replace(/\bCENTRAL\b/g,'CTRL');
+        if(contracted!==up) _sf[contracted.toLowerCase()]=up;
+        // Register spelled-out street types: ST→STREET, AVE→AVENUE etc
+        const spelled=up.replace(/\bST\b/g,'STREET').replace(/\bAVE\b/g,'AVENUE')
+          .replace(/\bRD\b/g,'ROAD').replace(/\bDR\b/g,'DRIVE').replace(/\bCRES\b/g,'CRESCENT');
+        if(spelled!==up) _sf[spelled.toLowerCase()]=up;
+        // Register BOTH (contracted + spelled): "clementi wst street 1" → canonical
+        const both=contracted.replace(/\bST\b/g,'STREET').replace(/\bAVE\b/g,'AVENUE')
+          .replace(/\bRD\b/g,'ROAD').replace(/\bDR\b/g,'DRIVE');
+        if(both!==up&&both!==contracted) _sf[both.toLowerCase()]=up;
+      }
+    })();
     document.getElementById('lat').textContent=(Date.now()-t0)+'ms';
     document.getElementById('txcount').textContent=DB.resale.length.toLocaleString();
     document.getElementById('load-bar').style.width='100%';
@@ -3996,6 +4019,16 @@ async function _handleInputInner(raw){
         }
         const fieldName=nextMissing==='block'?'block number':nextMissing==='floor'?'floor level':nextMissing==='flatType'?'flat type':nextMissing==='street'?'street name':nextMissing==='size'?'floor area in sqm':nextMissing==='leaseYear'?'lease year':'details';
         const example=nextMissing==='block'?'e.g. <strong style="color:var(--c)">block 158</strong>':nextMissing==='floor'?'e.g. <strong style="color:var(--c)">floor 8</strong>':nextMissing==='flatType'?'e.g. <strong style="color:var(--c)">4-room</strong>':nextMissing==='street'?'e.g. <strong style="color:var(--c)">Hougang Ave 6</strong>':nextMissing==='size'?'e.g. <strong style="color:var(--c)">93 sqm</strong>':nextMissing==='leaseYear'?'e.g. <strong style="color:var(--c)">lease 1979</strong>':'';
+        // P4: if input is praise/compliment, skip field error — redirect warmly
+        if(_intent&&(_intent.type===INTENT.PRAISE||_intent.type===INTENT.SOCIAL_NOISE)){
+          const _warmReply=rand([
+            `As always, sir — a great pleasure watching you work. Shall we carry on?`,
+            `Much appreciated, sir. Now — shall we get back to it?`,
+            `You're too kind, sir. Back to the data?`,
+          ]);
+          harveyMsg(_warmReply,[{label:'CONTINUE',val:'continue'},{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+          speak(_warmReply.replace(/<[^>]*>/g,'').slice(0,120));return;
+        }
         harveyMsg(`I couldn't find the ${fieldName} from that, sir — ${example}.`);
         speak(`I couldn't find the ${fieldName} from that, sir.`);return;
       }
@@ -4084,15 +4117,21 @@ async function _handleInputInner(raw){
   if(isLowest||isHighest){
     const p2=parseQuery(normalizeSpeech(raw));
     const flatFilter=p2.flatType||null;
+    // P9/P10: town/street-specific analysis
+    const _analyseTown=p2.town||null;
+    const _analyseStreet=p2.street?reverseStreet(p2.street)?.street:null;
     const topN=10;
     const cutoff12=evCutoff(12);
     let pool=DB.resale.filter(r=>r.month>=cutoff12);
+    // Filter by town or street if specified
+    if(_analyseStreet) pool=pool.filter(r=>r.street_name===_analyseStreet);
+    else if(_analyseTown) pool=pool.filter(r=>r.town===_analyseTown);
     if(flatFilter)pool=pool.filter(r=>r.flat_type===flatFilter);
     pool.sort((a,b)=>isLowest?Number(a.resale_price)-Number(b.resale_price):Number(b.resale_price)-Number(a.resale_price));
     const top=pool.slice(0,topN);
     if(!top.length){harveyMsg(`No results found, sir. Try a different flat type.`);return;}
-    const label=isLowest?`LOWEST PRICED${flatFilter?' '+flatFilter:''}`:
-                         `HIGHEST PRICED${flatFilter?' '+flatFilter:''}`;
+    const _scope=_analyseStreet?` · ${_analyseStreet}`:_analyseTown?` · ${_analyseTown}`:' · SINGAPORE-WIDE';
+    const label=isLowest?`LOWEST PRICED${flatFilter?' '+flatFilter:''}${_scope}`:`HIGHEST PRICED${flatFilter?' '+flatFilter:''}${_scope}`;
     const prices=top.map(r=>Number(r.resale_price));
     const rows=top.map((r,i)=>`<tr>
       <td style="font-family:var(--mono);color:var(--t3);font-size:10px">${i+1}</td>
@@ -4470,6 +4509,25 @@ async function _handleInputInner(raw){
 
   const _parsedEmpty=!parsed.town&&!parsed.street&&!parsed.block&&!parsed.floor&&!parsed.flatType&&!parsed.isEV;
   const _isPraiseInput=harveyKnows.isPraise(raw);
+  // P5: Praise response fires FIRST — before any field error or fallback
+  // "lol you sound like you know everything" → warm reply + redirect to work
+  if(_isPraiseInput||(_intent&&_intent.type===INTENT.PRAISE)){
+    const _praiseReply=rand([
+      `As always, sir — a great pleasure watching you work.`,
+      `Much appreciated, sir. Now, shall we get back to it?`,
+      `You are too kind, sir. I find the best way to repay the compliment is with accurate data.`,
+      `A generous observation, sir. I do my best — shall we carry on?`,
+    ]);
+    const _praiseWhere=workingCtx.streetCtx||workingCtx.townCtx||ctx.town||ctx.street;
+    const _praiseChips=_praiseWhere?[
+      {label:`↗ BACK TO ${String(_praiseWhere).slice(0,20).toUpperCase()}`,val:_praiseWhere},
+      {label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}
+    ]:[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}];
+    harveyMsg(_praiseReply,_praiseChips);
+    speak(_praiseReply);
+    if(mode!=='srch_waiting'&&mode!=='ev_waiting')mode='menu';
+    loading=false;sbEl.disabled=false;return;
+  }
   if(_parsedEmpty&&!_isPraiseInput){
     const _fu=detectFollowUp(raw,null);
     if(_fu){
@@ -4511,16 +4569,31 @@ async function _handleInputInner(raw){
     saveWorkingCtx(ctx,'ev_waiting');mode='ev_waiting';promptMissing(ctx);return;
   }
 
-  // ── Unknown input — graceful fallback (tatatata, ehh, lalala etc) ──
-  // Fires BEFORE re-serving last data — solves problem #6
+  // ── Unknown input — context-aware 1-liner wit + redirect (Problems 3, 6) ──
   if(_intent.type===INTENT.UNKNOWN&&_intent.subtype!=='gibberish'&&
      !ctx.town&&!ctx.street&&!ctx.block){
-    const _unknownReply=rand([
-      `Harvey processes 52,894 resale transactions fluently, sir — but this particular input has defeated me entirely. A translation would be most welcome.`,
-      `I specialise in Singapore property, sir — and I must confess this input has exceeded my considerable vocabulary. Could you rephrase?`,
-      `That one has me stumped, sir. I am quite the conversationalist — but not in that dialect, apparently.`,
-    ]);
-    harveyMsg(_unknownReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+    const _isMidTask=workingCtx.task||(mode==='srch_waiting'||mode==='ev_waiting');
+    const _where=workingCtx.streetCtx||workingCtx.townCtx||ctx.town||ctx.street;
+    const _midChips=_where?[
+      {label:`↗ BACK TO ${String(_where).slice(0,20).toUpperCase()}`,val:_where},
+      {label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}
+    ]:[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}];
+
+    let _unknownReply;
+    if(_isMidTask&&_where){
+      _unknownReply=rand([
+        `Not entirely sure what that was, sir — but I have ${String(_where).toUpperCase()} loaded and ready. Shall we continue?`,
+        `That one's beyond my vocabulary, sir. I'll pretend it didn't happen — we were on ${String(_where).toUpperCase()}, yes?`,
+        `Harvey processes 52,894 transactions fluently, sir. That input, however, is not among them. Back to ${String(_where).toUpperCase()}?`,
+      ]);
+    } else {
+      _unknownReply=rand([
+        `Harvey processes 52,894 resale transactions fluently, sir — but this particular input has defeated me entirely. A translation would be most welcome.`,
+        `I specialise in Singapore property, sir — and I must confess this input has exceeded my considerable vocabulary. Could you rephrase?`,
+        `That one has me stumped, sir. I am quite the conversationalist — but not in that dialect, apparently.`,
+      ]);
+    }
+    harveyMsg(_unknownReply,_midChips);
     speak(_unknownReply.replace(/<[^>]*>/g,'').slice(0,180));
     loading=false;sbEl.disabled=false;return;
   }
@@ -4539,13 +4612,19 @@ async function _handleInputInner(raw){
 
   const sentResult=harveyKnows.sentiment(raw);
   if(sentResult.hostile&&!sentResult.hasHDBContent){
-    harveyMsg(rand([
-      `I do apologise if I've been of little help, sir — though I must say, I've heard worse. I hope the rest of your day treats you considerably better.`,
-      `My sincerest apologies you feel that way, sir. I shall not take it personally — I am, after all, merely a very well-dressed database.`,
-      `Noted, sir — and I hope you feel better for having said it. I bear no ill will whatsoever. Whenever you're ready to talk HDB, I'm at your disposal.`,
-      `Fair enough, sir. I shan't argue. I hope your day improves considerably — and if there's a valuation I can help with later, the offer stands.`
-    ]),[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
-    speak(`My sincerest apologies you feel that way, sir. Whenever you're ready, I'm here.`);
+    // P7: 3 variations, spoken, no "I couldn't find" appended
+    const _angerReply=rand([
+      `I hear you, sir. Anger is a reasonable response to an unreasonable price. Let us find something more rational — I shall get to the search, please do cool down.`,
+      `Noted, sir. The candour is noted and the frustration is valid. The property market is genuinely challenging. I am not, however — I am entirely on your side. Shall we look?`,
+      `Fair enough, sir — strong feelings are understandable. I bear no ill will whatsoever. Let us find something better. Where shall we look?`,
+    ]);
+    const _angerWhere=workingCtx.streetCtx||workingCtx.townCtx||ctx.town||ctx.street;
+    const _angerChips=_angerWhere?[
+      {label:`↗ BACK TO ${String(_angerWhere).slice(0,20).toUpperCase()}`,val:_angerWhere},
+      {label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}
+    ]:[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}];
+    harveyMsg(_angerReply,_angerChips);
+    speak(_angerReply.replace(/<[^>]*>/g,'').slice(0,200));
     mode='menu';return;
   }
 
@@ -6220,7 +6299,7 @@ function harveyChitChat(raw, convCtx){
     ));
   }
 
-  if(m(/monday|monday blues|start of week|back to work|hate monday/)){
+  if(m(/monday|monday blues|start of week|hate monday/)){
     return withCtx(r(
       `Ah, Monday, sir. The day that arrives with the confidence of someone who doesn't check the room. I don't experience weekdays, personally — every day is equally full of resale data. How can I help?`,
       `Monday blues, sir? A very human affliction. I find the best cure is a purposeful task — shall we look up some transactions? Nothing like good data to start the week right.`,
