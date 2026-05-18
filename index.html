@@ -4733,7 +4733,16 @@ async function _handleInputInner(raw){
       const _pool=UNIVERSAL_REPLIES[_univEmo]||UNIVERSAL_REPLIES.anticipation;
       const _reply=_pool[Math.floor(Math.random()*_pool.length)];
       let _finalReply=_reply;
-      if(mode==='srch_waiting'){
+      // For joy/lol after data context — add witty redirect instead of closed loop
+      if(_univEmo==='joy'&&(convCtx.town||convCtx.street||workingCtx.streetCtx)){
+        const _joyWhere=workingCtx.streetCtx||convCtx.street||convCtx.town;
+        const _joyRedir=rand([
+          ` Not sure which part you find amusing, sir — but ${String(_joyWhere).toUpperCase()} is still loaded whenever you're ready.`,
+          ` I'll take that as appreciation, sir. Shall we get back to ${String(_joyWhere).toUpperCase()}?`,
+          ` Harvey isn't entirely sure what's funny, sir — but the data for ${String(_joyWhere).toUpperCase()} is perfectly serious.`,
+        ]);
+        _finalReply=_reply+_joyRedir;
+      } else if(mode==='srch_waiting'){
         _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">We were mid-search, sir — which street or area were you thinking?</em>`;
       } else if(mode==='ev_waiting'){
         _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">We were in the middle of your valuation, sir — shall we continue?</em>`;
@@ -4805,6 +4814,37 @@ async function _handleInputInner(raw){
     speak(_unknownReply.replace(/<[^>]*>/g,'').slice(0,180));
     loading=false;sbEl.disabled=false;return;
   }
+
+  // ── AMBIGUOUS/UNKNOWN — witty handler before harveyAttempt ──
+  if(_intent.type===INTENT.AMBIGUOUS||(_intent.type===INTENT.UNKNOWN&&!/_intent.subtype==='gibberish'/.test(''))){
+    const _hasPrev=!!(convCtx.town||convCtx.street||workingCtx.streetCtx);
+    const _prevRef=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+    let _ambReply;
+    if(/^(test|testing|test test|hello|hi|hey|yo|ping|check|is this on|anyone there|harvey\?)$/i.test(raw.trim())){
+      _ambReply=rand([
+        `All systems operational, sir. 52,894 transactions indexed and ready. Town, street, or block?`,
+        `Harvey is here, sir — fully calibrated. No need to test. What are we searching?`,
+        `No need to test, sir. I am always ready. What would you like to know?`,
+        `Present and accounted for, sir. What's the mission?`,
+      ]);
+    } else if(_hasPrev){
+      _ambReply=rand([
+        `I didn't quite catch that, sir — but I have ${String(_prevRef).toUpperCase()} from our last search. Shall we continue there?`,
+        `That one's a little unclear, sir. Were you referring to ${String(_prevRef).toUpperCase()}? Or shall we try something else?`,
+      ]);
+    } else {
+      _ambReply=rand([
+        `I didn't catch that, sir. A town, street, or block number will get us started right away.`,
+        `Could you clarify, sir? A location — Clementi, Tampines, a block number — and I'll pull the data.`,
+        `Harvey processes 52,894 transactions fluently, sir. That input, however, is not among them. A location?`,
+      ]);
+    }
+    harveyMsg(_ambReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+    speak(_ambReply.replace(/<[^>]*>/g,'').slice(0,180));
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  await harveyAttempt(raw);
 
   // Final data gate: only fire if the CURRENT input had data signals
   // Prevents "then lets continue" firing Bukit Merah just because ctx inherits convCtx
@@ -4935,36 +4975,7 @@ async function _handleInputInner(raw){
     mode='menu';return;
   }
 
-  // ── AMBIGUOUS/UNKNOWN — witty handler before harveyAttempt ──
-  if(_intent.type===INTENT.AMBIGUOUS||(_intent.type===INTENT.UNKNOWN&&!/_intent.subtype==='gibberish'/.test(''))){
-    const _hasPrev=!!(convCtx.town||convCtx.street||workingCtx.streetCtx);
-    const _prevRef=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
-    let _ambReply;
-    if(/^(test|testing|test test|hello|hi|hey|yo|ping|check|is this on|anyone there|harvey\?)$/i.test(raw.trim())){
-      _ambReply=rand([
-        `All systems operational, sir. 52,894 transactions indexed and ready. Town, street, or block?`,
-        `Harvey is here, sir — fully calibrated. No need to test. What are we searching?`,
-        `No need to test, sir. I am always ready. What would you like to know?`,
-        `Present and accounted for, sir. What's the mission?`,
-      ]);
-    } else if(_hasPrev){
-      _ambReply=rand([
-        `I didn't quite catch that, sir — but I have ${String(_prevRef).toUpperCase()} from our last search. Shall we continue there?`,
-        `That one's a little unclear, sir. Were you referring to ${String(_prevRef).toUpperCase()}? Or shall we try something else?`,
-      ]);
-    } else {
-      _ambReply=rand([
-        `I didn't catch that, sir. A town, street, or block number will get us started right away.`,
-        `Could you clarify, sir? A location — Clementi, Tampines, a block number — and I'll pull the data.`,
-        `Harvey processes 52,894 transactions fluently, sir. That input, however, is not among them. A location?`,
-      ]);
-    }
-    harveyMsg(_ambReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
-    speak(_ambReply.replace(/<[^>]*>/g,'').slice(0,180));
-    mode='menu';loading=false;sbEl.disabled=false;return;
-  }
 
-  await harveyAttempt(raw);
   mode='menu';
 }
 
@@ -8079,7 +8090,7 @@ const EMOTION_JOINS = {
   sad: [
     'miserable','gloomy','melancholy','despondent','dejected','forlorn','heartbroken',
     'distressed','distraught','crushed','sorrowful','mournful','hopeless',
-    'buay tahan','sian liao','gone case','cannot make it','no hope liao','die liao',
+    'hong gan','hong kan','hong gan liao','hong kan liao','hong liao','buay tahan','sian liao','gone case','cannot make it','no hope liao','die liao',
     'chey','cheyyy','hong gan liao','khao peh khao bu','kena sabo','last time never',
     'so suay','suay suay','pek chek liao','die die also','very sian','walao so sad',
     'buay tahan','sian liao','gone case','cannot make it','no hope liao',
@@ -8142,6 +8153,7 @@ const EMOTION_JOINS = {
     'fuck','fucking','fucker','shit','bullshit',
     'furious','livid','enraged','irate','infuriated','incensed','outraged','seething','indignant','irritated','exasperated','aggravated','agitated','bitter','hostile','resentful','contemptuous',
     'sian','sibei sian','very sian','bo liao','sianz','buay song','pek chek','very pek chek',
+    'gi lan','gilan','ki lan','kilan','lan jiao','lan cheow','cheebye','cb lah',
     'nabei','kee siao','vomit blood','mang zang','got problem ah','siam','tiam','diam',
     'wa lan eh','kuku','tio bo','see you outside','fucked','wtf','what the fuck','what the hell','what the heck',
     'screw this','screw you','screw off','bullshit','crap',
@@ -9117,6 +9129,7 @@ const UNIVERSAL_WORDS = {
   cendol:     'food',    rojak:   'food',    popiah:  'food',    otah:   'food',
   bakkwa:     'food',    satay:   'food',    chaokuay:'food',
   jiak:       'food',    belanja: 'food',    chope:   'anticipation',
+  kan:        'anger',
   kopitiam:   'joy',     lepak:   'joy',     lobang:  'anticipation',
   chiong:     'anticipation', swee: 'joy',   atas:    'joy',
   wanton:     'joy',    dumpling:'joy',    porridge:'joy',    congee: 'food',
