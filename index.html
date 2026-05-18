@@ -801,10 +801,16 @@ async function loadData(){
         const contracted=up.replace(/\bWEST\b/g,'WST').replace(/\bNORTH\b/g,'NTH')
           .replace(/\bSOUTH\b/g,'STH').replace(/\bEAST\b/g,'EST').replace(/\bCENTRAL\b/g,'CTRL');
         if(contracted!==up) _sf[contracted.toLowerCase()]=up;
-        // Register spelled-out street types: ST→STREET, AVE→AVENUE etc
+        // Register spelled-out types + expanded abbreviations (GDNS→GARDENS, NTH→NORTH etc)
         const spelled=up.replace(/\bST\b/g,'STREET').replace(/\bAVE\b/g,'AVENUE')
-          .replace(/\bRD\b/g,'ROAD').replace(/\bDR\b/g,'DRIVE').replace(/\bCRES\b/g,'CRESCENT');
+          .replace(/\bRD\b/g,'ROAD').replace(/\bDR\b/g,'DRIVE').replace(/\bCRES\b/g,'CRESCENT')
+          .replace(/\bGDNS\b/g,'GARDENS').replace(/\bCTS\b/g,'COURTS')
+          .replace(/\bHTS\b/g,'HEIGHTS').replace(/\bLOR\b/g,'LORONG').replace(/\bJLN\b/g,'JALAN');
         if(spelled!==up) _sf[spelled.toLowerCase()]=up;
+        // Expanded directionals: BEDOK NTH → BEDOK NORTH for reverse lookup
+        const expanded=up.replace(/\bNTH\b/g,'NORTH').replace(/\bSTH\b/g,'SOUTH')
+          .replace(/\bWST\b/g,'WEST').replace(/\bCTRL\b/g,'CENTRAL');
+        if(expanded!==up) _sf[expanded.toLowerCase()]=up;
         // Register BOTH (contracted + spelled): "clementi wst street 1" → canonical
         const both=contracted.replace(/\bST\b/g,'STREET').replace(/\bAVE\b/g,'AVENUE')
           .replace(/\bRD\b/g,'ROAD').replace(/\bDR\b/g,'DRIVE');
@@ -1021,10 +1027,21 @@ function contractStreetAbbr(s){
     .replace(/\bCOMMONWEALTH\b/g,'C\'WEALTH')
     .replace(/\bTOA\s+PAYOH\b/g,'TOA PAYOH')   // keep as-is, already in DB
 
+    // Protect town directionals BEFORE abbreviating EAST/WEST/NORTH/SOUTH
+    // "JURONG EAST" must stay "JURONG EAST" — not become "JURONG EST"
+    .replace(/\bJURONG\s+EAST\b/g,'JURONG EAST')
+    .replace(/\bJURONG\s+WEST\b/g,'JURONG WEST')
+    .replace(/\bANG\s+MO\s+KIO\s+NORTH\b/g,'ANG MO KIO NTH')
+    .replace(/\bBUKIT\s+TIMAH\b/g,'BUKIT TIMAH')
+
     .replace(/\bNORTH\b/g,'NTH')
     .replace(/\bSOUTH\b/g,'STH')
-    .replace(/\bEAST\b/g,'EST')                  // rare but exists
-    .replace(/\bWEST\b/g,'WST')                  // rare but exists (keep spatial context)
+    .replace(/\bEAST\b/g,'EST')
+    .replace(/\bWEST\b/g,'WST')
+
+    // Restore protected town names after directional abbreviation
+    .replace(/\bJURONG\s+EST\b/g,'JURONG EAST')
+    .replace(/\bJURONG\s+WST\b/g,'JURONG WEST')
     .replace(/\bCENTRAL\b/g,'CTRL')
     .replace(/\bUPPER\b/g,'UPP')
     .replace(/\bLOWER\b/g,'LWR')
@@ -2207,8 +2224,9 @@ function parseQuery(raw){
   const ly=raw.match(/(?:built|lease|commenced?|lease\s*start|year\s*built)\s*(?:year\s*)?(\d{4})|(\d{4})\s*(?:built|lease|commenced?)/i);
   if(ly)res.leaseYear=Number(ly[1]||ly[2]);
   const qNoBlock=q.replace(/^\s*(?:BLK|BLOCK)?\s*\d+[A-Z]?\s*/,'').trim();
-  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK)\s*\d*[A-Z]?)\b/)
-    ||qNoBlock.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN|NTH|STH|EST|WST|CTRL)\s*\d*[A-Z]?))\b/);
+  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK|AVE|RD|DR|CRES|CL|LOR|JLN|HTS)\s*\d*[A-Z]?)\b/)
+    ||qNoBlock.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d+[A-Z]?))\b/)
+    ||qNoBlock.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:NTH|STH|EST|WST|CTRL))(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d*[A-Z]?))\b/);
   if(stMatch){
     let candidate=stMatch[1].trim()
       .replace(/^\s*(?:BLK|BLOCK)\s*\d+[A-Z]?\s*/i,'')
@@ -4199,6 +4217,18 @@ async function _handleInputInner(raw){
   enrichCtx(ctx);
 
 
+
+  // ── CONFIDENCE — "you sure?" ──
+  if(/\byou sure\b|\bare you sure\b|sure\?|really\?|seriously\?|doubt it|how sure|double.?check/i.test(raw)){
+    const _confReply=rand([
+      `Certain, sir. The data is from official HDB resale records — 52,894 transactions, no editorialising. If something looks wrong, do point it out and I shall re-examine.`,
+      `Entirely sure, sir. I don't speculate — I report what HDB recorded. If there's a specific figure you'd like me to verify, I'm happy to cross-reference.`,
+      `As sure as the data allows, sir. I work from recorded resale transactions, not estimates. The numbers speak for themselves.`,
+    ]);
+    harveyMsg(_confReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+    speak(_confReply.replace(/<[^>]*>/g,'').slice(0,200));
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
 
   if(/what are you|who are you|what is harvey|what('s| is) your (name|purpose|job|function)|tell me about yourself|introduce yourself/i.test(raw)){
     const identity=rand([
@@ -10116,6 +10146,18 @@ function cleanForSpeech(txt){
     if(SPEAK_AS_ACRONYM.has(match)){return match.split('').join(' ');}
     return match.charAt(0)+match.slice(1).toLowerCase();
   });
+  // TTS acronym expansion — NUS → "N U S", NTU → "N T U" etc
+  s=s.replace(/\bNUS\b/g,'N U S').replace(/\bNTU\b/g,'N T U')
+    .replace(/\bSMU\b/g,'S M U').replace(/\bSUTD\b/g,'S U T D')
+    .replace(/\bBTO\b/g,'B T O').replace(/\bMOP\b/g,'M O P')
+    .replace(/\bCPF\b/g,'C P F').replace(/\bHDB\b/g,'H D B')
+    .replace(/\bMRT\b/g,'M R T').replace(/\bLRT\b/g,'L R T')
+    .replace(/\bCBD\b/g,'C B D').replace(/\bURA\b/g,'U R A')
+    .replace(/\bSLA\b/g,'S L A').replace(/\bABSD\b/g,'A B S D')
+    .replace(/\bBSD\b/g,'B S D').replace(/\bPSF\b/g,'P S F')
+    .replace(/\bIRR\b/g,'I R R').replace(/\bROI\b/g,'R O I')
+    .replace(/\bCCK\b/g,'Choa Chu Kang').replace(/\bAMK\b/g,'Ang Mo Kio')
+    .replace(/\bTOA PAYOH\b/g,'Toa Payoh');
   return s;
 }
 
