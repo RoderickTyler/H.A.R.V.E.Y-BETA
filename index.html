@@ -3758,18 +3758,18 @@ function sidetrackRecovery(){
 // e.g. "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1" (how DB stores it)
 // Call at EVERY ctx.street/convCtx.street write point
 function canonicalStreet(raw){
-  if(!raw||!DB||!DB.loaded) return raw;
-  // 1. Direct lookup in STREET_SHORTFORMS (built at load time, O(1))
+  if(!raw) return raw;
   const lower = raw.toLowerCase().trim();
+  // 1. Direct lookup in STREET_SHORTFORMS (static + dynamic built at load time)
   if(STREET_SHORTFORMS[lower]) return STREET_SHORTFORMS[lower];
-  // 2. Already canonical — check exact DB match
   const up = raw.toUpperCase().trim();
+  if(!DB||!DB.loaded) return up;
+  // 2. Already canonical — check exact DB match
   if(DB.resale.some(r=>r.street_name&&r.street_name.toUpperCase()===up)) return up;
   // 3. Use reverseStreet scoring to find canonical
   const found = reverseStreet(raw);
   if(found&&found.street) return found.street;
-  // 4. Fallback — return as-is
-  return raw;
+  return up;
 }
 
 async function _handleInputInner(raw){
@@ -3779,9 +3779,11 @@ async function _handleInputInner(raw){
 
   // Track sidetracking while mid-task
   if(workingCtx.task && _intent.type !== INTENT.DATA_QUERY){
-    workingCtx.sidetrackCount++;
-    if(_intent.type===INTENT.CHITCHAT||_intent.type===INTENT.UNKNOWN)
+    // Only count CHITCHAT/UNKNOWN as sidetracks — not emotional inputs
+    if(_intent.type===INTENT.CHITCHAT||_intent.type===INTENT.UNKNOWN||_intent.type===INTENT.AMBIGUOUS){
+      workingCtx.sidetrackCount++;
       workingCtx.sidetrackTopic = _intent.subtype||'chit chat';
+    }
   } else if(_intent.type===INTENT.DATA_QUERY){
     workingCtx.sidetrackCount=0;
     workingCtx.sidetrackTopic=null;
@@ -3791,8 +3793,9 @@ async function _handleInputInner(raw){
   if(workingCtx.sidetrackCount>=2 && workingCtx.task){
     workingCtx.sidetrackCount=0;
     const _recovery=sidetrackRecovery();
+    const _resumeVal=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town||'search';
     const _recoveryChips=[
-      {label:'CONTINUE SEARCH',val:workingCtx.townCtx||'search'},
+      {label:'CONTINUE SEARCH',val:'continue'},
       {label:'CHANGE DETAILS',val:'__changedetails__'},
       {label:'START FRESH',val:'__restart__'},
     ];
@@ -3814,6 +3817,28 @@ async function _handleInputInner(raw){
   }
 
   // ── Option C: Debug overlay ──
+  // ── CONTINUE chip handler — resume last search/EV ──
+  if(/^(continue|ok lets continue|lets continue|resume|carry on|yes continue|go on|back to it)$/i.test(raw.trim())||raw==='continue'){
+    const _resumeStreet=workingCtx.streetCtx||convCtx.street;
+    const _resumeTown=workingCtx.townCtx||convCtx.town;
+    const _resumeTask=workingCtx.task;
+    if(_resumeStreet){
+      ctx.street=_resumeStreet;ctx.town=_resumeTown||ctx.town;
+      await handleStreetOnly(_resumeStreet,ctx);return;
+    } else if(_resumeTown){
+      ctx.town=_resumeTown;
+      ctx.isEV=false;mode='srch_waiting';runSearch();return;
+    } else {
+      const _noCtx=rand([
+        `Nothing queued, sir — I don't have a previous search to resume. What are we looking for?`,
+        `Fresh start it is, sir. Which town or street shall we search?`,
+      ]);
+      harveyMsg(_noCtx,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+      speak(_noCtx.replace(/<[^>]*>/g,'').slice(0,150));
+      loading=false;sbEl.disabled=false;return;
+    }
+  }
+
   if(raw==='__debug__'||raw==='debug'){
     const _dbState={
       mode, workingCtx, harveyPersona,
@@ -4345,7 +4370,8 @@ async function _handleInputInner(raw){
     speak(personality);mode='menu';return;
   }
 
-  if(harveyKnows.isPraise(raw)){
+  // Only check praise if NOT a data query (prevents "clementi wst st 1" being swallowed)
+  if(_intent&&_intent.type!==INTENT.DATA_QUERY&&harveyKnows.isPraise(raw)){
     const jr=rand([
       `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
       `You're far too kind, sir. I was merely doing what I was built for — though I must admit, I do it rather well.`,
