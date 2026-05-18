@@ -694,7 +694,7 @@ function applyConvCtx(parsed){
   if(parsed.minPrice) merged.minPrice=parsed.minPrice;
   if(parsed.isEV!==undefined) merged.isEV=parsed.isEV;
   if(parsed.town&&parsed.town!==convCtx.town){merged.street='';merged.block='';}
-  if(parsed.street&&parsed.street!==convCtx.street){merged.block='';}
+  if(parsed.street&&canonicalStreet(parsed.street)!==convCtx.street){merged.block='';}
   if(parsed.flatType&&parsed.flatType!==convCtx.flatType){merged.block='';}
   return merged;
 }
@@ -3450,6 +3450,11 @@ async function runSearch(){
       if(!ctx.town&&_rsFound.town) ctx.town=_rsFound.town;
     }
   }
+  // Sync convCtx with canonical street before searching
+  if(ctx.street){
+    convCtx.street = ctx.street;
+    if(ctx.town) convCtx.town = ctx.town;
+  }
   const recs=searchTransactions(ctx);
   const cutoff=evCutoff(6);
   const is6mo=recs.length>0&&recs.some(r=>r.month>=cutoff);
@@ -3472,6 +3477,12 @@ async function handleStreetOnly(street, ctx){
     speak("I couldn't find that street, sir. Could you double-check the name?");
     loading=false;sbEl.disabled=false;mode='srch_waiting';return;
   }
+
+  // Sync ctx and convCtx with canonical DB street name immediately
+  ctx.street = found.street;
+  ctx.town = found.town || ctx.town;
+  convCtx.street = found.street;
+  convCtx.town = found.town || convCtx.town;
 
   const cut12=evCutoff(12);
   const recs=DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut12)
@@ -3608,10 +3619,12 @@ function classifyIntent(raw, wCtx){
     return {type:INTENT.PRAISE};
 
   // DATA QUERY — has HDB data signals
-  const hasDataSignal = !!(parseQuery(normalizeSpeech(raw)).town ||
-    parseQuery(normalizeSpeech(raw)).street ||
-    parseQuery(normalizeSpeech(raw)).block ||
-    /transact|search|resale|valuat|estimate|worth|how much|price of|sold|recent|show me/.test(q));
+  // DATA QUERY — fast lightweight check (no DB needed, no parseQuery overhead)
+  const _TOWNS_RX=/\b(tampines|clementi|bedok|bishan|jurong|yishun|woodlands|sengkang|punggol|hougang|serangoon|queenstown|toa payoh|ang mo kio|bukit batok|bukit merah|bukit panjang|bukit timah|geylang|kallang|marine parade|pasir ris|sembawang|whampoa|central area)\b/i;
+  const _STREET_RX=/\b(street|avenue|road|drive|crescent|close|walk|link|lane|nth|sth)\b|\b(st|ave|rd|dr|cres|lor|jln)\s+\d/i;
+  const _BLOCK_RX=/\b(blk|block)\s*\d|\b\d{3,4}[a-z]?\s*(room|floor|level)/i;
+  const hasDataSignal = _TOWNS_RX.test(q)||_STREET_RX.test(q)||_BLOCK_RX.test(q)||
+    /transact|search|resale|valuat|estimate|worth|how much|price of|sold|recent|show me/.test(q);
   if(hasDataSignal) return {type:INTENT.DATA_QUERY};
 
   // EMOTIONAL — has emotion signal
