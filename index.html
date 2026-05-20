@@ -801,7 +801,7 @@ function speakNext(){
               safeStart();
               vdbgLog('SR restarted (echo decay done)','var(--g)');
             }
-          },300);
+          },500);
         }
       }
       // Whisper: resume MediaRecorder
@@ -936,7 +936,7 @@ function stopSpeech(){
         if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
         safeStart();
       }
-    },300);
+    },500);
   }
 }
 
@@ -11270,7 +11270,7 @@ async function transcribeAudio(blob){
   const f32=decoded.getChannelData(0);ac.close();
   const r=await _wPipeline(f32,{
     language:'english',task:'transcribe',return_timestamps:false,
-    initial_prompt:'HDB resale Clementi Tampines Bedok Punggol Sengkang Woodlands Jurong Yishun Bishan Hougang Serangoon Pasir Ris Queenstown Ang Mo Kio Toa Payoh Bukit Batok Teban four room five room three room executive block floor storey'
+    initial_prompt:'HDB resale flat Singapore Clementi Tampines Bedok Punggol Sengkang Woodlands Jurong West Yishun Bishan Hougang Serangoon Pasir Ris Queenstown Ang Mo Kio Toa Payoh Bukit Batok Bukit Merah Bukit Timah Teban Gardens Marsiling Choa Chu Kang Geylang Kallang Whampoa Boon Lay Jurong East Sembawang four room five room three room two room executive maisonette block floor storey highest lowest cheapest price search estimate valuation'
   });
   return r.text.trim();
 }
@@ -11448,8 +11448,167 @@ function normaliseVoiceInput(txt){
   s=s.replace(/\bavenue two\b/gi,'avenue 2');
   s=s.replace(/\bblk\b/gi,'block');
 
-  // ── Wake/sleep commands — must match exactly so don't over-normalise ──
-  // These are handled before normalise runs so leave them
+  // ── Fast speech compound fixes ──
+  // STT merges words when spoken quickly -- split them back
+  // Flat types
+  s=s.replace(/fourroom/gi,'four room');
+  s=s.replace(/fiveroom/gi,'five room');
+  s=s.replace(/threeroom/gi,'three room');
+  s=s.replace(/tworoom/gi,'two room');
+  s=s.replace(/oneroom/gi,'one room');
+  s=s.replace(/4room/gi,'four room');
+  s=s.replace(/5room/gi,'five room');
+  s=s.replace(/3room/gi,'three room');
+  // STT mishears for flat types when spoken fast
+  s=s.replace(/for room/gi,'four room');
+  s=s.replace(/forum/gi,'four room');       // "four room" → "forum"
+  s=s.replace(/forgo/gi,'four room');        // "four room" fast
+  s=s.replace(/fargo/gi,'four room');
+  s=s.replace(/for roo/gi,'four room');
+  s=s.replace(/fi room/gi,'five room');
+  s=s.replace(/five-room/gi,'five room');
+  s=s.replace(/four-room/gi,'four room');
+  s=s.replace(/three-room/gi,'three room');
+  // Executive flat mishears
+  s=s.replace(/executif/gi,'executive');
+  s=s.replace(/executive flat/gi,'executive');
+  s=s.replace(/exec flat/gi,'executive');
+  // Highest/lowest fast speech
+  s=s.replace(/highes/gi,'highest');
+  s=s.replace(/highest price/gi,'highest');
+  s=s.replace(/lowest price/gi,'lowest');
+  s=s.replace(/cheapest price/gi,'cheapest');
+  // Block number fast speech
+  s=s.replace(/block(\d+)/gi,'block $1');
+  s=s.replace(/blk(\d+)/gi,'block $1');
+
+  // ── Stuttered / repeated letters (speech impediment normalisation) ──
+  // "flloor" → "floor", "thrityseven" → "thirty seven", "tehhhvan" → "teban"
+  s=s.replace(/([a-z])\1{2,}/gi,'$1$1'); // triple+ repeated chars → double
+  s=s.replace(/\bfl+oor\b/gi,'floor');
+  s=s.replace(/\bfl+at\b/gi,'flat');
+  s=s.replace(/\bst+reet\b/gi,'street');
+  s=s.replace(/\bbl+ock\b/gi,'block');
+  s=s.replace(/\bpr+ice\b/gi,'price');
+  s=s.replace(/\bhi+ghest\b/gi,'highest');
+  s=s.replace(/\blo+west\b/gi,'lowest');
+
+  // ── Floor / storey numbers spoken various ways ──
+  s=s.replace(/\b(floor|storey|level|unit)\s+number\s+(\d+)\b/gi,'floor $2');
+  s=s.replace(/\b(floor|storey|level)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty)\b/gi,(m,_,n)=>{
+    const nm={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,twenty:20,thirty:30,forty:40};
+    return 'floor '+(nm[n.toLowerCase()]||n);
+  });
+  // "thirty seven" → "37", "twenty five" → "25" (floor numbers)
+  s=s.replace(/\b(twenty|thirty|forty)\s+(one|two|three|four|five|six|seven|eight|nine)\b/gi,(m,tens,ones)=>{
+    const t={twenty:20,thirty:30,forty:40};
+    const o={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9};
+    return String((t[tens.toLowerCase()]||0)+(o[ones.toLowerCase()]||0));
+  });
+  s=s.replace(/\bfifth floor\b/gi,'floor 5');
+  s=s.replace(/\btenth floor\b/gi,'floor 10');
+  s=s.replace(/\b(\d+)(st|nd|rd|th) floor\b/gi,'floor $1');
+  s=s.replace(/\bground floor\b/gi,'floor 1');
+  s=s.replace(/\blow floor\b/gi,'low floor');
+  s=s.replace(/\bhigh floor\b/gi,'high floor');
+  // "five floor" without "room" context = floor 5 not flat type
+  s=s.replace(/\b(five|four|three|two|one) floor\b/gi,(m,n)=>{
+    if(s.includes('room'))return m; // ambiguous -- leave
+    const map={one:1,two:2,three:3,four:4,five:5};
+    return 'floor '+(map[n.toLowerCase()]||n);
+  });
+
+  // ── Unit / flat type combos spoken fast ──
+  s=s.replace(/\b4\s*rm\b/gi,'four room');
+  s=s.replace(/\b5\s*rm\b/gi,'five room');
+  s=s.replace(/\b3\s*rm\b/gi,'three room');
+  s=s.replace(/\b2\s*rm\b/gi,'two room');
+  s=s.replace(/\bfour\s*rm\b/gi,'four room');
+  s=s.replace(/\bfive\s*rm\b/gi,'five room');
+  s=s.replace(/\bthree\s*rm\b/gi,'three room');
+  // "executive" variants
+  s=s.replace(/\bexecutiff?\b/gi,'executive');
+  s=s.replace(/\bexecutive apartment\b/gi,'executive');
+  s=s.replace(/\bmaisonett?e?\b/gi,'executive');
+  s=s.replace(/\bmaison\b/gi,'executive');
+  // "unit" as synonym for flat
+  s=s.replace(/\bunit type\b/gi,'flat type');
+  s=s.replace(/\bwhat unit\b/gi,'what flat type');
+
+  // ── Price / value fast speech ──
+  s=s.replace(/\bhow much (is the |for the |for a )?price\b/gi,'price');
+  s=s.replace(/\bwhat is the (asking )?price\b/gi,'price');
+  s=s.replace(/\bprice range\b/gi,'price');
+  s=s.replace(/\bask price\b/gi,'price');
+  s=s.replace(/\bselling price\b/gi,'price');
+  s=s.replace(/\btransaction price\b/gi,'price');
+  s=s.replace(/\bhow much (did it |does it )?sell(ing)?\b/gi,'price');
+  s=s.replace(/\bwhat did it go for\b/gi,'price');
+  s=s.replace(/\bwhat did it sell for\b/gi,'price');
+
+  // ── Boon Tong / Meiling / area mishears ──
+  s=s.replace(/\bboon tong\b/gi,'boon tiong');
+  s=s.replace(/\bboon tiong\b/gi,'buona vista'); // context-dependent -- leave boon tiong
+  s=s.replace(/\bboon tiong\b/gi,'boon tiong');
+  s=s.replace(/\bbuona vista\b/gi,'buona vista');
+  s=s.replace(/\bbwona\b/gi,'buona');
+  s=s.replace(/\bme?i?\s*li?ng\b/gi,'meiling');  // "meiling" road
+  s=s.replace(/\bmay ling\b/gi,'meiling');
+  s=s.replace(/\bmei ling\b/gi,'meiling');
+  // Teban variants
+  s=s.replace(/\bteh+van?\b/gi,'teban');
+  s=s.replace(/\bteh+ban?\b/gi,'teban');
+  s=s.replace(/\btev?an\b/gi,'teban');
+  s=s.replace(/\bteavan\b/gi,'teban');
+  s=s.replace(/\bte\s*ban\b/gi,'teban');
+  // Clementi stretched
+  s=s.replace(/\bclem+enti?\b/gi,'clementi');
+  s=s.replace(/\bclem+\b/gi,'clementi');
+  // Bukit Batok / Bukit Timah fast
+  s=s.replace(/\bbukit ba+tok\b/gi,'bukit batok');
+  s=s.replace(/\bbookit\b/gi,'bukit');
+  s=s.replace(/\bbuki\b/gi,'bukit');
+  // Queenstown
+  s=s.replace(/\bqueen town\b/gi,'queenstown');
+  s=s.replace(/\bqueens town\b/gi,'queenstown');
+  // Jurong West / East
+  s=s.replace(/\bjurong wes\b/gi,'jurong west');
+  s=s.replace(/\byur?ong\b/gi,'jurong');
+  // Choa Chu Kang
+  s=s.replace(/\bchua?\s*chu\s*kan?g?\b/gi,'choa chu kang');
+  s=s.replace(/\bcck\b/gi,'choa chu kang');
+
+  // ── Search / analysis intent fast phrases ──
+  s=s.replace(/\bshow me (the )?(highest|lowest|cheapest|most expensive)\b/gi,(m,_,dir)=>dir);
+  s=s.replace(/\bwhat('s| is) the (highest|lowest|cheapest|most expensive)\b/gi,(m,_,dir)=>dir);
+  s=s.replace(/\bhighest price (in |for |at )?\b/gi,'highest ');
+  s=s.replace(/\blowest price (in |for |at )?\b/gi,'lowest ');
+  s=s.replace(/\bcheapest (one )?(in |for |at )?\b/gi,'cheapest ');
+  s=s.replace(/\bmost expensive (one )?(in |for |at )?\b/gi,'highest ');
+  s=s.replace(/\brecent (transactions?|sales?|deals?)\b/gi,'recent');
+  s=s.replace(/\blatest (transactions?|sales?|deals?)\b/gi,'recent');
+  s=s.replace(/\bwhat are the prices?\b/gi,'price');
+  s=s.replace(/\bhow (is|are) the prices?\b/gi,'price');
+  // Combined flat type + price
+  s=s.replace(/\b(four|five|three|two) room price\b/gi,'$1 room');
+  s=s.replace(/\b(four|five|three|two) room (flat |unit )?(how much|price|cost|sell)\b/gi,'$1 room price');
+
+  // ── Number normalisation ──
+  s=s.replace(/\bzero\b/gi,'0');
+  s=s.replace(/\bone two three\b/gi,'123');
+  // Ordinal spoken as words for block/floor
+  s=s.replace(/\bblock\s+(one|two|three|four|five|six|seven|eight|nine)\b/gi,(m,n)=>{
+    const nm={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9};
+    return 'block '+(nm[n.toLowerCase()]||n);
+  });
+
+  // ── Pre-send cleanup ──
+  // Strip trailing Singlish particles
+  s=s.replace(/\s+(lah|lor|leh|mah|sia|bah|hor|ah|la|right|ok|okay|can|yes|no|wor|one)$/gi,'');
+  // Strip leading filler that normalise might have missed
+  s=s.replace(/^(so|then|and|but|like|actually|basically)\s+/gi,'');
+  // Collapse multiple spaces
+  s=s.replace(/\s+/g,' ');
 
   return s.trim();
 }
@@ -11512,10 +11671,22 @@ function buildRecog(){
       vsBar.style.color='var(--g)';
       showLiveBubble(_srBuffer);
 
-      // System commands -- only when Harvey NOT speaking
+      // System commands
+      const _raw=normaliseVoiceInput(final.trim());
+
+      // STOP fires regardless of whether Harvey is speaking -- most important command
+      if(isSilenceTTS(_raw)){
+        stopSpeech();
+        _srBuffer='';
+        _srPausedForTTS=false;
+        if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';
+        clearTimeout(speechTimer);speechTimer=null;
+        vdbgLog('STOP command received','var(--c)');
+        return;
+      }
+
+      // Other commands only when Harvey not speaking
       if(!_speakBusy){
-        const _raw=normaliseVoiceInput(final.trim());
-        if(isSilenceTTS(_raw)){stopSpeech();_srBuffer='';if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';return;}
         if(isDeactivationPhrase(_raw)){deactivateVoiceMode(false);return;}
         if(isSkipPhrase(_raw)){
           skipPreamble=true;
@@ -11532,7 +11703,9 @@ function buildRecog(){
         _srBuffer='';speechTimer=null;window._srRestarts=0;
         if(!toSend){vdbgLog('3s -- nothing to send','#555');return;}
         removeLiveBubble();
-        const raw=normaliseVoiceInput(toSend);
+        // Remove consecutive duplicate words (STT restart artifact)
+        const _deduped=toSend.replace(/(\w+)\s+/gi,'$1').replace(/(\w+)\s+/gi,'$1');
+        const raw=normaliseVoiceInput(_deduped);
         const normalised=normalizeSpeech(raw);
         ciEl.value=normalised;
         ciEl.style.height='auto';
