@@ -370,6 +370,30 @@ tr:hover td{background:rgba(0,212,255,.03)}
     <span id="vs-txt">HARVEY LISTENING…</span>
   </div>
 
+  <!-- VOICE DEBUG PANEL -->
+  <div id="vdbg" style="display:none;position:fixed;bottom:100px;right:10px;width:320px;max-height:400px;overflow-y:auto;background:rgba(0,0,0,.92);border:1px solid var(--g);border-radius:8px;font-family:var(--mono);font-size:10px;color:var(--g);z-index:9999;padding:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;border-bottom:1px solid rgba(0,255,136,.2);padding-bottom:6px">
+      <span style="color:var(--a);font-weight:bold">🎤 VOICE DEBUG</span>
+      <button onclick="document.getElementById('vdbg').style.display='none'" style="background:none;border:none;color:var(--t2);cursor:pointer;font-size:11px">✕</button>
+    </div>
+    <div id="vdbg-sr" style="margin-bottom:4px">SR Support: <span id="vdbg-sr-val" style="color:var(--t2)">checking…</span></div>
+    <div id="vdbg-lang" style="margin-bottom:4px">Language: <span id="vdbg-lang-val" style="color:var(--t2)">—</span></div>
+    <div id="vdbg-mic" style="margin-bottom:4px">Mic Permission: <span id="vdbg-mic-val" style="color:var(--t2)">unknown</span></div>
+    <div style="margin-bottom:4px">Buffer: <span id="vdbg-buf-val" style="color:var(--c);font-size:9px;word-break:break-all">(empty)</span></div>
+    <div style="margin-bottom:4px">Timer: <span id="vdbg-timer-val" style="color:var(--t2)">idle</span> | Restarts: <span id="vdbg-restart-val" style="color:var(--t2)">0</span></div>
+    <div style="margin-bottom:4px">Harvey dB: <span id="vdbg-harvey-db" style="color:var(--a)">--</span></div>
+    <div id="vdbg-state" style="margin-bottom:4px">Mic State: <span id="vdbg-state-val" style="color:var(--t2)">off</span></div>
+    <div id="vdbg-level" style="margin-bottom:4px">Audio Level: <span id="vdbg-level-val" style="color:var(--t2)">—</span></div>
+    <div style="border-top:1px solid rgba(0,255,136,.2);margin-top:6px;padding-top:6px;color:var(--t2)">EVENTS:</div>
+    <div id="vdbg-log" style="color:#aaa;max-height:180px;overflow-y:auto"></div>
+    <div style="border-top:1px solid rgba(0,255,136,.2);margin-top:6px;padding-top:6px">
+      <div style="color:var(--t2);margin-bottom:4px">HEARD:</div>
+      <div id="vdbg-heard" style="color:#fff;word-break:break-all;min-height:20px"></div>
+    </div>
+    <button onclick="testMicAccess()" style="margin-top:8px;padding:4px 10px;background:rgba(0,255,136,.1);border:1px solid var(--g);color:var(--g);border-radius:4px;cursor:pointer;font-size:9px;font-family:var(--mono)">TEST MIC</button>
+    <button onclick="testSpeechRecog()" style="margin-top:8px;margin-left:4px;padding:4px 10px;background:rgba(255,170,0,.1);border:1px solid var(--a);color:var(--a);border-radius:4px;cursor:pointer;font-size:9px;font-family:var(--mono)">TEST SPEECH</button>
+  </div>
+
   <!-- MAIN -->
   <div class="main">
     <!-- LEFT -->
@@ -477,8 +501,8 @@ tr:hover td{background:rgba(0,212,255,.03)}
         <div class="input-area">
           <div class="irow">
             <span class="ipfx">›_</span>
-            <textarea id="ci" placeholder="Ask HARVEY — town, street, block, floor, value... or say 'wake up Harvey'" rows="1"></textarea>
-            <button class="mbtn" id="mb" onclick="toggleMic()" title="Speak to HARVEY">
+            <textarea id="ci" placeholder="Ask Harvey anything..." rows="1"></textarea>
+            <button class="mbtn" id="mb" onclick="toggleMic()" onmousedown="if(_whisperMode&&_wReady)startPTBRecording()" onmouseup="if(_whisperMode&&_wReady)stopPTBRecording()" ontouchstart="if(_whisperMode&&_wReady){event.preventDefault();startPTBRecording()}" ontouchend="if(_whisperMode&&_wReady){event.preventDefault();stopPTBRecording()}" title="Speak to HARVEY">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="5" y="1" width="6" height="9" rx="3"/>
                 <path d="M2 8c0 3.3 2.7 6 6 6s6-2.7 6-6"/>
@@ -632,6 +656,218 @@ if(window.speechSynthesis.onvoiceschanged!==undefined)
 
 
 let _speakQueue=[];let _speakBusy=false;
+let _harveyCurrentSpeech='';
+let _srBuffer=''; // module-level -- survives every buildRecog() restart
+// Silero VAD state
+let _sileroReady=false,_sileroSession=null,_sileroStream=null;
+let _sileroAC=null,_sileroProc=null,_sileroSpeaking=false;
+let _sileroH=new Float32Array(2*64),_sileroC=new Float32Array(2*64); // LSTM state
+let _harveyAmbientDb=-999;   // Harvey's speaker level as heard by mic (set during first TTS)
+let _energyMonAC=null;       // AudioContext for energy monitoring
+let _energyMonStream=null;   // mic stream for energy monitor
+let _energyMonAn=null;       // AnalyserNode
+let _energyMonTimer=null;    // polling timer
+let _energyMonReady=false;   // true once mic stream is open
+// ── Voice fingerprint ──
+// What Harvey is currently saying (for self-filter)
+let _harveyRecentSpeech=[];    // Last few utterances for filtering
+let _whisperMode=false,_mediaRecorder=null,_audioChunks=[],_ptbHeld=false,_whisperInitDone=false;
+let _wReady=false,_wLoading=false,_wPipeline=null,_wCBs=[];
+
+// ══ ENERGY MONITOR — detects user speaking over Harvey ══
+
+function _rmsDb(buf){
+  let s=0; for(let i=0;i<buf.length;i++) s+=buf[i]*buf[i];
+  const rms=Math.sqrt(s/buf.length);
+  return rms<1e-10?-100:20*Math.log10(rms);
+}
+
+// Open a persistent mic stream for energy monitoring
+// Called once on first safeStart or toggleMic
+function _openEnergyMonitor(){
+  if(_energyMonReady||_energyMonStream) return;
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC||!navigator.mediaDevices?.getUserMedia) return;
+  navigator.mediaDevices.getUserMedia({
+    audio:{echoCancellation:true,noiseSuppression:false,autoGainControl:false,channelCount:1}
+  }).then(stream=>{
+    _energyMonStream=stream;
+    _energyMonAC=new AC();
+    const src=_energyMonAC.createMediaStreamSource(stream);
+    _energyMonAn=_energyMonAC.createAnalyser();
+    _energyMonAn.fftSize=2048;
+    _energyMonAn.smoothingTimeConstant=0.5;
+    src.connect(_energyMonAn);
+    _energyMonReady=true;
+    vdbgLog('Energy monitor ready','var(--g)');
+  }).catch(()=>{});
+}
+
+// Called when Harvey starts speaking — measure his ambient level for 300ms
+function _measureHarveyLevel(){
+  if(!_energyMonReady||!_energyMonAn) return;
+  const buf=new Float32Array(_energyMonAn.fftSize);
+  const samples=[];
+  let count=0;
+  const measure=()=>{
+    _energyMonAn.getFloatTimeDomainData(buf);
+    const db=_rmsDb(buf);
+    if(db>-60) samples.push(db);
+    if(++count<6) setTimeout(measure,50); // 6 samples over 300ms
+    else if(samples.length>2){
+      samples.sort((a,b)=>a-b);
+      _harveyAmbientDb=samples[Math.floor(samples.length/2)]; // median
+      vdbgLog('Harvey ambient: '+Math.round(_harveyAmbientDb)+'dB','var(--a)');
+    }
+  };
+  setTimeout(measure,100); // let Harvey's voice start coming through speaker first
+}
+
+// Poll mic energy while Harvey is speaking
+// If energy jumps > USER_SPIKE_DB above Harvey's ambient → user is speaking → stop Harvey
+const USER_SPIKE_DB=8; // user must be 8dB above Harvey's ambient to trigger interrupt
+function _startEnergyPoll(){
+  clearInterval(_energyMonTimer);
+  if(!_energyMonReady||!_energyMonAn||_harveyAmbientDb===-999) return;
+  const buf=new Float32Array(_energyMonAn.fftSize);
+  let _pollCount=0;
+  const MAX_POLLS=200; // 200 x 50ms = 10s max -- prevents runaway polling
+  _energyMonTimer=setInterval(()=>{
+    _pollCount++;
+    if(!_speakBusy||_pollCount>MAX_POLLS){
+      clearInterval(_energyMonTimer);
+      _energyMonTimer=null;
+      return;
+    }
+    _energyMonAn.getFloatTimeDomainData(buf);
+    const db=_rmsDb(buf);
+    if(db>(_harveyAmbientDb+USER_SPIKE_DB)){
+      vdbgLog('User over Harvey: '+Math.round(db)+'dB > '+Math.round(_harveyAmbientDb+USER_SPIKE_DB)+'dB','var(--c)');
+      window.speechSynthesis.cancel();
+      _speakQueue=[];_speakBusy=false;_harveyCurrentSpeech='';
+      clearInterval(_energyMonTimer);_energyMonTimer=null;
+      if((voiceMode||micState==='query')&&!_speakBusy){
+        if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';
+        if(!recogBusy)setTimeout(()=>safeStart(),200);
+      }
+    }
+  },50);
+}
+
+function stopEnergyPoll(){
+  clearInterval(_energyMonTimer);
+  _energyMonTimer=null;
+  // Reset ambient so next Harvey utterance gets fresh measurement
+  _harveyAmbientDb=-999;
+}
+
+// ══ SILERO VAD ══
+// 1.8MB ONNX model, cached in browser IndexedDB after first load
+// Replaces fixed 3s silence timer with neural speech detection
+
+async function loadSileroVAD(){
+  if(_sileroReady||_sileroSession)return true;
+  try{
+    // Use ONNX Runtime Web via CDN
+    const ort=window.ort;
+    if(!ort){
+      // Load ONNX Runtime if not present
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js';
+        s.onload=res;s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    // Load Silero VAD model from CDN (cached in browser after first load)
+    const modelUrl='https://cdn.jsdelivr.net/gh/snakers4/silero-vad@master/src/silero_vad.onnx';
+    _sileroSession=await window.ort.InferenceSession.create(modelUrl,{
+      executionProviders:['wasm'],
+      graphOptimizationLevel:'all'
+    });
+    _sileroReady=true;
+    _sileroH=new Float32Array(2*64).fill(0);
+    _sileroC=new Float32Array(2*64).fill(0);
+    vdbgLog('Silero VAD ready','var(--g)');
+    return true;
+  }catch(e){
+    vdbgLog('Silero unavailable -- using 3s timer fallback: '+e.message,'var(--a)');
+    return false;
+  }
+}
+
+async function _sileroInfer(audioChunk){
+  if(!_sileroReady||!_sileroSession)return 0.5;
+  try{
+    const input=new window.ort.Tensor('float32',audioChunk,[1,audioChunk.length]);
+    const sr=new window.ort.Tensor('int64',BigInt64Array.from([BigInt(16000)]),[1]);
+    const h=new window.ort.Tensor('float32',_sileroH,[2,1,64]);
+    const c=new window.ort.Tensor('float32',_sileroC,[2,1,64]);
+    const out=await _sileroSession.run({input,sr,h,c});
+    _sileroH=out.hn.data;
+    _sileroC=out.cn.data;
+    return out.output.data[0]; // speech probability 0-1
+  }catch(e){return 0.5;}
+}
+
+// Start Silero VAD on mic stream
+// When speech detected: set _sileroSpeaking=true
+// When speech ends: fire 3s timer immediately (or sooner)
+async function startSileroOnStream(stream){
+  if(!_sileroReady)return;
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return;
+  _sileroAC=new AC({sampleRate:16000});
+  const src=_sileroAC.createMediaStreamSource(stream);
+  const bufSize=512; // ~32ms at 16kHz
+  _sileroProc=_sileroAC.createScriptProcessor(bufSize,1,1);
+  let _chunk=[];
+  _sileroProc.onaudioprocess=async(ev)=>{
+    if(micState!=='query')return;
+    const data=ev.inputBuffer.getChannelData(0);
+    _chunk.push(...data);
+    if(_chunk.length>=1536){ // ~96ms chunks for Silero
+      const frame=new Float32Array(_chunk.splice(0,1536));
+      const prob=await _sileroInfer(frame);
+      const wasSpeaking=_sileroSpeaking;
+      _sileroSpeaking=prob>0.5;
+      // Speech just ended
+      if(wasSpeaking&&!_sileroSpeaking&&_srBuffer){
+        vdbgLog('Silero: speech ended (prob='+prob.toFixed(2)+') -- firing send','var(--g)');
+        // Clear existing 3s timer and fire sooner (500ms grace)
+        clearTimeout(speechTimer);
+        speechTimer=setTimeout(()=>{
+          const toSend=(_srBuffer||ciEl.value).trim();
+          _srBuffer='';speechTimer=null;window._srRestarts=0;
+          if(!toSend)return;
+          removeLiveBubble();
+          const raw=normaliseVoiceInput(toSend);
+          const normalised=normalizeSpeech(raw);
+          ciEl.value=normalised;
+          ciEl.style.height='auto';
+          ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';
+          vsTxt.textContent='Sending: '+normalised.slice(0,50);
+          vdbgLog('>>> SILERO SEND: ['+normalised+']','var(--c)');
+          handleInput();
+        },600); // 600ms after Silero detects end -- catches trailing words
+      }
+      // Update debug
+      const lvl=document.getElementById('vdbg-level-val');
+      if(lvl)lvl.textContent=(prob>0.5?'SPEECH':'silence')+' ('+prob.toFixed(2)+')';
+    }
+  };
+  src.connect(_sileroProc);
+  _sileroProc.connect(_sileroAC.destination);
+  _sileroStream=stream;
+  vdbgLog('Silero VAD attached to mic stream','var(--g)');
+}
+
+function stopSileroVAD(){
+  if(_sileroProc){try{_sileroProc.disconnect();}catch(e){}}
+  if(_sileroAC){try{_sileroAC.close();}catch(e){}}
+  _sileroProc=null;_sileroAC=null;_sileroStream=null;_sileroSpeaking=false;
+}
+
 function speakNext(){
   if(!_speakBusy&&_speakQueue.length>0){
     _speakBusy=true;
@@ -639,18 +875,67 @@ function speakNext(){
     const u=new SpeechSynthesisUtterance(clean);
     u.rate=rate||VOICE_SPEED;u.pitch=0.6;u.volume=0.92;
     if(harveyVoice)u.voice=harveyVoice;
+    u.onstart=()=>{
+      // Record ONLY the first 8 chars of current speech for self-filter
+      // Do NOT use _harveyRecentSpeech -- common words cause false positives after 10+ turns
+      _harveyCurrentSpeech=clean.toLowerCase().slice(0,8);
+      if(vsTxt&&voiceMode)vsTxt.textContent='HARVEY SPEAKING...';
+      // Whisper: pause MediaRecorder while Harvey speaks
+      if(_whisperMode&&_mediaRecorder&&_mediaRecorder.state==='recording'){
+        try{_mediaRecorder.pause();}catch(e){}
+      }
+      // Energy monitor: measure Harvey's level
+      if(_energyMonReady) _measureHarveyLevel();
+    };
     u.onend=()=>{
       _speakBusy=false;
       document.querySelector('.hrw')?.classList.remove('speaking');
       document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+      // Clear Harvey speech record immediately
+      _harveyCurrentSpeech='';
+      stopEnergyPoll();
+      // Whisper: resume MediaRecorder after Harvey finishes — now listen for user
+      if(_whisperMode&&_mediaRecorder&&_mediaRecorder.state==='paused'){
+        try{
+          // Short delay so speaker echo clears before we start recording again
+          setTimeout(()=>{
+            if(_mediaRecorder&&_mediaRecorder.state==='paused')_mediaRecorder.resume();
+            if(vsTxt)vsTxt.textContent='WHISPER READY -- HOLD MIC TO SPEAK';
+          },400);
+        }catch(e){}
+      }
+      if(voiceMode&&micState==='query'&&!_speakBusy){
+        if(vsTxt&&!_whisperMode)vsTxt.textContent='HARVEY LISTENING — SPEAK ANYTIME';
+        if(!recogBusy&&!_whisperMode)setTimeout(()=>safeStart(),200);
+      }
       speakNext();
     };
-    u.onerror=()=>{_speakBusy=false;speakNext();};
+    u.onerror=()=>{
+      _speakBusy=false;
+      // Resume on error too
+      if(voiceMode&&micState==='query'&&!_speakBusy){
+        setTimeout(()=>safeStart(),400);
+      }
+      speakNext();
+    };
     document.querySelector('.hrw')?.classList.add('speaking');
     document.getElementById('harvey-speaking-fx')?.classList.add('active');
     window.speechSynthesis.speak(u);
   }
 }
+// ── SPEAK THIS: cut current speech and read a specific message bubble ──
+function speakThisMsg(btn,txt){
+  // Visual feedback
+  document.querySelectorAll('.speak-this-btn').forEach(b=>{
+    b.textContent='▶';b.style.color='var(--t2)';
+  });
+  btn.textContent='▶▶';btn.style.color='var(--g)';
+  // Cut whatever Harvey is saying, read this message instead
+  window.speechSynthesis.cancel();
+  _speakQueue=[];_speakBusy=false;_harveyCurrentSpeech='';
+  speak(txt,true);
+}
+
 function speak(txt,_priority=false){
   if(!voiceOn||!txt)return;
   const clean=cleanForSpeech(txt);
@@ -689,6 +974,14 @@ function applyConvCtx(parsed){
   if(parsed.block)    merged.block=parsed.block;
   if(parsed.floor!==undefined&&parsed.floor) merged.floor=parsed.floor;
   if(parsed.size)     merged.size=parsed.size;
+  // Only restore workingCtx.streetCtx if convCtx has NO street at all
+  // convCtx.street is always more recent — never let stale workingCtx overwrite it
+  if(parsed.town&&!parsed.street&&!convCtx.street&&workingCtx.streetCtx){
+    const _wTown=workingCtx.townCtx;
+    if(!_wTown||_wTown===parsed.town){
+      merged.street=workingCtx.streetCtx;
+    }
+  }
   if(parsed.leaseYear)merged.leaseYear=parsed.leaseYear;
   if(parsed.maxPrice) merged.maxPrice=parsed.maxPrice;
   if(parsed.minPrice) merged.minPrice=parsed.minPrice;
@@ -724,6 +1017,7 @@ const fmtP=p=>'$'+Number(p).toLocaleString();
 
 
 function stopSpeech(){
+  // Resume listening after manual stop
   if(currentAudio){currentAudio.pause();try{currentAudio.currentTime=0;}catch(e){}currentAudio=null;}
   window.speechSynthesis?.cancel();
   if(typeof _speakQueue!=='undefined'){_speakQueue=[];_speakBusy=false;}
@@ -961,7 +1255,7 @@ function searchTransactions(params){
 
 
 const TOWNS=['ANG MO KIO','BEDOK','BISHAN','BUKIT BATOK','BUKIT MERAH','BUKIT PANJANG','BUKIT TIMAH','CENTRAL AREA','CHOA CHU KANG','CLEMENTI','GEYLANG','HOUGANG','JURONG EAST','JURONG WEST','KALLANG/WHAMPOA','MARINE PARADE','PASIR RIS','PUNGGOL','QUEENSTOWN','SEMBAWANG','SENGKANG','SERANGOON','TAMPINES','TOA PAYOH','WOODLANDS','YISHUN'];
-const FLAT_MAP={'1-ROOM':'1 ROOM','2-ROOM':'2 ROOM','3-ROOM':'3 ROOM','4-ROOM':'4 ROOM','5-ROOM':'5 ROOM','1RM':'1 ROOM','2RM':'2 ROOM','3RM':'3 ROOM','4RM':'4 ROOM','5RM':'5 ROOM','EXEC':'EXECUTIVE','EXECUTIVE':'EXECUTIVE','1 ROOM':'1 ROOM','2 ROOM':'2 ROOM','3 ROOM':'3 ROOM','4 ROOM':'4 ROOM','5 ROOM':'5 ROOM'};
+const FLAT_MAP={'1-ROOM':'1 ROOM','2-ROOM':'2 ROOM','3-ROOM':'3 ROOM','4-ROOM':'4 ROOM','5-ROOM':'5 ROOM','1RM':'1 ROOM','2RM':'2 ROOM','3RM':'3 ROOM','4RM':'4 ROOM','5RM':'5 ROOM','EXEC':'EXECUTIVE','EXECUTIVE':'EXECUTIVE','1 ROOM':'1 ROOM','2 ROOM':'2 ROOM','3 ROOM':'3 ROOM','4 ROOM':'4 ROOM','5 ROOM':'5 ROOM','ALL TYPES':'ALL TYPES','ALL TYPE':'ALL TYPES','ANY TYPE':'ALL TYPES','ANY TYPES':'ALL TYPES','ALL':'ALL TYPES','ANY':'ALL TYPES','NO FILTER':'ALL TYPES','ALL FLAT':'ALL TYPES','ALL FLATS':'ALL TYPES'};
 const TYPICAL_SIZE={'1 ROOM':33,'2 ROOM':45,'3 ROOM':68,'4 ROOM':93,'5 ROOM':113,'EXECUTIVE':144,'MULTI-GENERATION':155};
 
 
@@ -2145,7 +2439,34 @@ function reverseStreet(streetRaw){
     }
     sc.sort((a,b)=>b.score-a.score);
     const _minScore=nameWords.length;
-    if(sc.length&&sc[0].score>=_minScore){m=DB.resale.filter(r=>r.street_name===sc[0].street);if(m.length)return _srResult(m);}
+    if(sc.length&&sc[0].score>=_minScore){
+      // When multiple streets tie, pick the one whose trailing number matches input
+      // e.g. "CLEMENTI WEST ST 1" input → prefer ST 1 over ST 2 among ties
+      const _top=sc.filter(x=>x.score===sc[0].score);
+      let _best=sc[0];
+      if(_top.length>1){
+        if(streetNum){
+          // Input has a number — find exact match
+          const _exact=_top.find(x=>{
+            const _n=x.street.match(/\s(\d+[A-Z]?)$/);
+            return _n&&_n[1]===streetNum;
+          });
+          if(_exact) _best=_exact;
+        } else {
+          // No number given — pick lowest-numbered but flag as guessed
+          const _sorted=_top.slice().sort((a,b)=>{
+            const _na=Number((a.street.match(/\s(\d+)/)||[0,999])[1]);
+            const _nb=Number((b.street.match(/\s(\d+)/)||[0,999])[1]);
+            return _na-_nb;
+          });
+          _best=_sorted[0];
+          // Attach all sibling streets so caller can show disambiguation
+          _best._siblings=_sorted.map(x=>x.street);
+          _best._guessed=true;
+        }
+      }
+      m=DB.resale.filter(r=>r.street_name===_best.street);if(m.length)return _srResult(m,_best);
+    }
   }
 
   const fw=s.replace(/\d+[A-Z]?/g,'').split(' ').filter(w=>w.length>=4&&!new RegExp(`^(${typeRxStr})$`).test(w));
@@ -2158,7 +2479,11 @@ function reverseStreet(streetRaw){
       const score=fw.filter(w=>up.includes(w)||_fuzzyWord(up,w)).length;
       if(score>0)sc2.push({score,street:r.street_name});
     }
-    sc2.sort((a,b)=>b.score-a.score);
+    sc2.sort((a,b)=>b.score-a.score||(()=>{
+      const _na=Number((a.street.match(/\s(\d+)/)||[0,0])[1]);
+      const _nb=Number((b.street.match(/\s(\d+)/)||[0,0])[1]);
+      return streetNum?0:_na-_nb; // prefer lowest number when no num given
+    })());
     if(sc2.length){m=DB.resale.filter(r=>r.street_name===sc2[0].street);if(m.length)return _srResult(m);}
   }
 
@@ -2178,16 +2503,21 @@ function reverseStreet(streetRaw){
   return null;
 }
 function _fuzzyWord(haystack,needle){
-  if(needle.length<4)return false;
+  // Minimum 6 chars to avoid false positives like "DATA"→"DAMAI", "HOME"→"HOMA"
+  if(needle.length<6)return false;
+  // Allow 1 diff for 6-7 chars, 2 diffs for 8+ chars (proper place names only)
+  const maxDiff=needle.length>=8?2:1;
   for(let i=0;i<=haystack.length-needle.length+1;i++){
     const chunk=haystack.slice(i,i+needle.length);
     let diff=0;for(let j=0;j<needle.length;j++)if(chunk[j]!==needle[j])diff++;
-    if(diff<=1)return true;
+    if(diff<=maxDiff)return true;
   }
   return false;
 }
-function _srResult(matches){
-  return{town:matches[0].town,street:matches[0].street_name,blocks:[...new Set(matches.map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b))};
+function _srResult(matches, extra){
+  const r={town:matches[0].town,street:matches[0].street_name,blocks:[...new Set(matches.map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b))};
+  if(extra&&extra._guessed){r._guessed=true;r._siblings=extra._siblings||[];}
+  return r;
 }
 
 
@@ -2201,7 +2531,17 @@ function reverseTown(block,streetRaw){
 }
 
 function parseQuery(raw){
-  const q=raw.toUpperCase();const res={};
+  // Pre-process conversational location references before normal parsing
+  // "base on clementi" / "i mean clementi" / "by that I mean tampines" → extract location
+  let _raw=raw;
+  const _convLoc=raw.match(/\b(?:based?\s+on|i\s+mean|by\s+that|referring\s+to|talking\s+about|speaking\s+of|in\s+terms\s+of)\s+([\w\s]+?)(?:\s*(?:right|lah|lor|ok|$))/i);
+  if(_convLoc&&_convLoc[1]&&_convLoc[1].trim().length>=3){
+    // Use just the location part for parsing, preserving keywords like "highest"
+    const _locPart=_convLoc[1].trim();
+    const _keywords=raw.match(/\b(highest|lowest|cheapest|most expensive|5 room|4 room|3 room|2 room|executive|estimate|valuat)\b/gi)||[];
+    _raw=(_keywords.join(' ')+' '+_locPart).trim();
+  }
+  const q=_raw.toUpperCase();const res={};
   const town=fuzzyMatchTown(q);if(town)res.town=town;
   for(const[a,v]of Object.entries(FLAT_MAP)){if(q.includes(a)){res.flatType=v;break}}
   const blk=q.match(/\bBLK\s*(\d+[A-Z]?)\b|\bBLOCK\s*#?\s*(\d+[A-Z]?)\b/);
@@ -2224,14 +2564,27 @@ function parseQuery(raw){
   const ly=raw.match(/(?:built|lease|commenced?|lease\s*start|year\s*built)\s*(?:year\s*)?(\d{4})|(\d{4})\s*(?:built|lease|commenced?)/i);
   if(ly)res.leaseYear=Number(ly[1]||ly[2]);
   const qNoBlock=q.replace(/^\s*(?:BLK|BLOCK)?\s*\d+[A-Z]?\s*/,'').trim();
+  // Strip analysis/filter keywords before stMatch2/3 to prevent greedy capture
+  // Strip analysis/filter keywords AND flat type patterns for stMatch2/3
+  // "lowest 4 room in CLEMENTI WST ST 1" → "CLEMENTI WST ST 1"
+  const qNoBlockClean=qNoBlock
+    .replace(/\b(?:HIGHEST|LOWEST|RECENT|ALL|ANY|TYPES|TYPE|MOST|CHEAPEST|EXPENSIVE|IN|AT|FOR|THE)\b/g,'')
+    .replace(/\b\d+\s*(?:ROOM|RM|BED|EXEC|EXECUTIVE)\b/gi,'')
+    .replace(/\b(?:EXECUTIVE|EXEC|ROOM|ROOMS)\b/gi,'')
+    .replace(/\s+/g,' ').trim();
   const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK|AVE|RD|DR|CRES|CL|LOR|JLN|HTS)\s*\d*[A-Z]?)\b/)
-    ||qNoBlock.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d+[A-Z]?))\b/)
-    ||qNoBlock.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:NTH|STH|EST|WST|CTRL))(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d*[A-Z]?))\b/);
+    ||qNoBlockClean.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d+[A-Z]?))\b/)
+    ||qNoBlockClean.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:NTH|STH|EST|WST|CTRL))(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d*[A-Z]?))\b/);
   if(stMatch){
     let candidate=stMatch[1].trim()
       .replace(/^\s*(?:BLK|BLOCK)\s*\d+[A-Z]?\s*/i,'')
       .replace(/\s+/g,' ').trim();
-    if(candidate.length>3) res.street=candidate;
+    if(candidate.length>3){
+      // Immediately canonicalize to resolve typos and directional variants
+      // "CLMEENTI WST ST 1" → "CLEMENTI WEST ST 1", not stored as raw typo
+      const _canon=DB&&DB.loaded?canonicalStreet(candidate):candidate;
+      res.street=_canon||candidate;
+    }
   }
 
   if(res.street && typeof convCtx !== 'undefined' && convCtx.town &&
@@ -2246,10 +2599,14 @@ function parseQuery(raw){
       .replace(/\b(?:FLOOR|LEVEL|STOREY|FLR|LVL)\s*\d+\b/g,'')
       .replace(/\b\d+\s*(?:ROOM|RM|SQM|M2)\b/g,'')
       .replace(/\b(?:EXECUTIVE|EXEC|ESTIMATE|VALUE|SEARCH|RECENT|FIND|SHOW)\b/g,'')
+      // Strip conversational filler, question words, and price/analysis keywords
+      // Prevents "base on clementi what is the highest price" from becoming a street query
+      .replace(/\b(?:BASE|BASED|ON|WHAT|IS|THE|HIGHEST|LOWEST|CHEAPEST|MOST|EXPENSIVE|PRICE|PRICES|ABOUT|HOW|ABOUT|I|MEAN|BY|THAT|YOU|MY|ME|PLEASE|SIR|LET|TELL|GIVE|WANT|NEED|LIKE|JUST|ONLY|ALSO|AND|OR|WITH|FOR|FROM|AT|THIS|THESE|THOSE|WHO|WHY|WHEN|WHERE|WHICH|DO|DID|CAN|COULD|WOULD|SHOULD|WILL|SHALL|MAY|MIGHT|ARE|AM|WAS|WERE|HAVE|HAS|HAD|GET|GOT|SAY|SAID|AFFORDABLE|TRANSACTIONS?|RECENT|RECORDS?|ALL|TYPES|TYPE|ANY|IN)\b/g,'')
       .replace(/\s+/g,' ').trim();
 
     const _hasStreetType=/(ST|AVE|DR|RD|CL|CRES|LOR|JLN|LANE|WAY|WALK|RISE|VIEW|LINK|GDNS|TER|PLACE|GROVE|COURT|HEIGHTS|ROAD|STREET|AVENUE|DRIVE|CRESCENT|CLOSE|TERRACE|GARDENS)/i.test(streetCandidate);
-    const _streetLongEnough=streetCandidate.trim().split(/\s+/).length>=2&&streetCandidate.replace(/\s/g,'').length>=6;
+    const _knownPlaceWord=/\b(BT|BUKIT|TOA|PAYOH|CHOA|CHU|KANG|ANG|MO|KIO|JURONG|CLEMENTI|TAMPINES|BEDOK|BISHAN|SENGKANG|PUNGGOL|HOUGANG|YISHUN|WOODLANDS|KALLANG|GEYLANG|QUEENSTOWN|WHAMPOA|SERANGOON|PASIR|SEMBAWANG|BATOK|MERAH|TIMAH|PANJANG|TEBAN|GHIM|MOH|HENDERSON|REDHILL|DOVER|COMMONWEALTH|FARRER|BENDEMEER|LORONG|JALAN|MARSILING|BRICKLAND|PETIR|BANGKIT|BUANGKOK|CASHEW|FERNVALE|RIVERVALE|COMPASSVALE|ANCHORVALE|KIM|TECK|HOO|KAH|CHUAN|TAH|LENG|CHIN|BOON|KEAT|VEERASAMY|MCNAIR|DORSET|BUFFALO|RACE\s*COURSE|CRAWFORD)\b/i.test(streetCandidate);
+    const _streetLongEnough=streetCandidate.trim().split(/\s+/).length>=2&&streetCandidate.replace(/\s/g,'').length>=6&&_knownPlaceWord;
     if(streetCandidate.length>4&&DB.loaded&&(_hasStreetType||_streetLongEnough)){
       const found=reverseStreet(streetCandidate);
       if(found){
@@ -2596,7 +2953,7 @@ async function runEvExpanded(p,labels){
   const _expLowS=low>=1000000?(low/1000000).toFixed(2).replace(/\.?0+$/,'')+' million dollars':_expLow+' thousand dollars';
   const _expHiS=high>=1000000?(high/1000000).toFixed(2).replace(/\.?0+$/,'')+' million dollars':_expHi+' thousand dollars';
   speak(`Expanded estimate using ${comps.length} comparable transactions, sir. The median is ${_expM}. The range runs from ${_expLowS} to ${_expHiS}. This is a directional guide — for a precise valuation, please contact us directly.`);
-  setTimeout(()=>harveyMsg('Anything else, sir?',[{label:'ESTIMATE ANOTHER UNIT',val:'estimate value'},{label:'SEARCH TRANSACTIONS',val:'search'}]),1400);
+  setTimeout(()=>harveyMsg('Anything else, sir?',[{label:'TRY DIFFERENT UNIT',val:'__estimatenew__'},{label:'SEARCH TRANSACTIONS',val:'search'}]),1400);
   mode='menu';loading=false;sbEl.disabled=false;
 }
 
@@ -2631,7 +2988,13 @@ function harveyMsg(html,chips=[]){
   const restartBtn=`<button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.06);border-color:rgba(255,170,0,.25)" onclick="chipClick('__restart__')" title="Restart conversation">↺ NEW</button>`;
   const rawForEQ=(typeof lastRaw!=='undefined')?lastRaw:'';
   const flavour=rawForEQ?harveyFlavour(html,rawForEQ):'';
-  d.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:6px;justify-content:space-between"><span>// HARVEY</span><span style="display:flex;gap:4px">${stopBtn}${restartBtn}</span></span><div class="mbub">${html}${flavour}${ch}</div>`;
+  // Unique ID for each message so speakThisMsg can reference it
+  const _msgId='hmsg-'+Date.now();
+  // Extract plain text for TTS (strip HTML tags)
+  const _plainTxt=html.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,300);
+  const _escapedTxt=_plainTxt.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  const speakBtn=`<button class="stop-btn speak-this-btn" title="Read this message" style="color:var(--t2);font-size:9px;padding:3px 8px" onclick="speakThisMsg(this,'${_escapedTxt}')">▶</button>`;
+  d.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:6px;justify-content:space-between"><span>// HARVEY</span><span style="display:flex;gap:4px">${speakBtn}${stopBtn}${restartBtn}</span></span><div class="mbub">${html}${flavour}${ch}</div>`;
   msgsEl.appendChild(d);bot();
 }
 function userMsg(text){
@@ -2728,7 +3091,7 @@ function showTransactions(recs,params,is6mo){
       {label:'SEARCH AGAIN',val:'search'},
       {label:'CHANGE DETAILS',val:'__searchform__'},
       {label:'START FRESH',val:'__restart__'},
-      ...(params.town&&!params.street?[{label:'COMPARE TOWNS',val:`most expensive town vs ${params.town}`}]:[]),
+      ...(params.false?[]:[]),
       ...(params.street?[{label:'WHY SO EXPENSIVE?',val:`why is ${locLabel} so expensive`}]:[]),
       ...(params.block?[{label:'ESTIMATE THIS UNIT',val:`estimate value block ${params.block} ${params.street||''}`}]:[])
     ];
@@ -3134,7 +3497,7 @@ function showEV(result,params){
       ...(result.flatType?[{label:`${ftLabel} ON ${streetShort}…`,val:`recent flattype ${result.flatType} all blocks ${result.street}`}]:[]),
       {label:`ALL TYPES ON ${streetShort}…`,val:`recent all blocks ${result.street}`},
       {label:'⚙ CHANGE DETAILS',val:'__changedetails__'},
-      {label:'ESTIMATE ANOTHER UNIT',val:'estimate value'}
+      {label:'TRY DIFFERENT UNIT',val:'__estimatenew__'}
     ];
     harveyMsg(`That covers everything I have, sir. Should you need a more grounded assessment, do reach out — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.${ctx.sizeInferred?'<br><br><span style="font-family:var(--mono);font-size:9px;color:var(--a)">⚠ You have not provided an accurate unit size and as such the value may differ if your vicinity has a different size and built of the same flat type. Here\'s a contact you can reach out for a more detailed pricing and valuation: <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us →</a></span>':''}${ctx.floorInferred?'<br><span style="font-family:var(--mono);font-size:9px;color:var(--a)">⚠ No floor level was provided — estimate used a mid-floor reference. For floor-specific pricing, <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">reach out to us on WhatsApp →</a></span>':''}<br><br>${detailsSummary}`,chips);
     speak(`That covers all the transactions I have, sir. Do WhatsApp us if you need a more grounded assessment.`);
@@ -3203,6 +3566,90 @@ function storeyRangeToFloors(storeys){
   return [...floors].sort((a,b)=>a-b);
 }
 
+
+// ── SEARCH CARD — lightweight town+flattype selector like EV HUD ──
+function _showSearchCard(prefillTown, prefillFlatType, prefillStreet, pendingDir){
+  const formId='srch-card-'+Date.now();
+  const opt=(val,label,sel)=>`<option value="${val}"${sel?' selected':''}>${label}</option>`;
+  const townOpts=`<option value="">— select town —</option>`+
+    TOWNS.map(t=>opt(t,t,t===prefillTown)).join('');
+  // Build street options for prefilled town
+  const _streetList=prefillTown&&DB&&DB.townStreets&&DB.townStreets[prefillTown]
+    ?DB.townStreets[prefillTown]:[];
+  const streetOpts=`<option value="">— optional: pick a street —</option>`+
+    _streetList.map(s=>opt(s,s,s===prefillStreet)).join('');
+  const ftOpts=`<option value="">— any type —</option>`+
+    ['2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE'].map(ft=>opt(ft,ft,ft===prefillFlatType)).join('');
+  // Street row only shown when town is selected
+  const formHtml=`<div class="hud-form" id="${formId}" style="margin-top:10px">
+  <div class="hud-row">
+    <span class="hud-label">📍 TOWN</span>
+    <select class="hud-select" id="${formId}-town" onchange="(function(sel){
+      const t=sel.value;
+      const sRow=document.getElementById('${formId}-street-row');
+      const sSel=document.getElementById('${formId}-street');
+      if(!t||!window.DB||!window.DB.townStreets){sRow.style.display='none';return;}
+      const streets=window.DB.townStreets[t]||[];
+      sSel.innerHTML='<option value=\'\'>— optional: pick a street —</option>'+streets.map(s=>'<option value=\''+s+'\'>'+s+'</option>').join('');
+      sRow.style.display=streets.length?'flex':'none';
+    })(this)">
+      ${townOpts}
+    </select>
+  </div>
+  <div class="hud-row" id="${formId}-street-row" style="border-top:none;display:${_streetList.length?'flex':'none'}">
+    <span class="hud-label">🛣️ STREET</span>
+    <select class="hud-select" id="${formId}-street">
+      ${streetOpts}
+    </select>
+  </div>
+  <div class="hud-row" style="border-top:none">
+    <span class="hud-label">🏠 TYPE</span>
+    <select class="hud-select" id="${formId}-type">
+      ${ftOpts}
+    </select>
+  </div>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="stop-btn" style="color:var(--g);border-color:var(--g);font-size:10px;padding:6px 16px"
+      onclick="(function(){
+        const t=document.getElementById('${formId}-town')?.value;
+        const s=document.getElementById('${formId}-street')?.value;
+        const ft=document.getElementById('${formId}-type')?.value;
+        if(!t){document.getElementById('${formId}-town').style.borderColor='var(--r)';return;}
+        const loc=s||t;
+        const _pd=${JSON.stringify(pendingDir||null)};
+        // If analysis pending, fire "highest/lowest [ft] [loc]" else plain search
+        if(_pd&&ft) chipClick(_pd+' '+ft.toLowerCase()+' '+loc);
+        else if(_pd) chipClick(_pd+' all types '+loc);
+        else chipClick(ft?loc+' '+ft.toLowerCase():loc);
+      })()">▶ SEARCH</button>
+    <button class="stop-btn" style="font-size:10px;padding:6px 14px"
+      onclick="(function(){
+        const t=document.getElementById('${formId}-town')?.value;
+        const s=document.getElementById('${formId}-street')?.value;
+        const ft=document.getElementById('${formId}-type')?.value;
+        const loc=s||t;
+        if(!t)return;
+        chipClick('estimate value'+(loc?' '+loc:''));
+      })()">▶ ESTIMATE VALUE</button>
+    <div style="font-size:9px;color:var(--t2);font-family:var(--mono);margin-top:4px;padding:0 2px">
+      ${pendingDir?`<em>Analysis: <strong>${pendingDir}</strong> — select street &amp; type above</em>`:'OR type directly — town, street, or block number.'}
+    </div>
+  </div>
+  <div style="font-size:9px;color:var(--t2);font-family:var(--mono);margin-top:6px">
+    OR just type a town, street, or block number directly — I'll pick it up.
+  </div>
+</div>`;
+  const _intro=prefillTown
+    ? `Continuing with <strong>${prefillTown}</strong> — or pick a different town below, sir.`
+    : rand([
+        `Which area shall we look at, sir? Select a town and optionally a flat type.`,
+        `Right — select a town to get started, sir. Flat type is optional.`,
+        `Search mode. Pick a town, sir — flat type is optional.`,
+      ]);
+  harveyMsg(_intro+'<br>'+formHtml,[]);
+  speak(prefillTown?`Continuing with ${prefillTown}, sir — or pick a new town.`:`Which town, sir?`);
+  mode='menu';
+}
 
 function buildHudForm(ctx){
   const formId='hud-form-'+Date.now();
@@ -3468,10 +3915,13 @@ async function runSearch(){
       if(!ctx.town&&_rsFound.town) ctx.town=_rsFound.town;
     }
   }
-  // Sync convCtx with canonical street before searching
+  // Sync convCtx: if street given, set it; if town-only, CLEAR old street
   if(ctx.street){
     convCtx.street = ctx.street;
     if(ctx.town) convCtx.town = ctx.town;
+  } else if(ctx.town){
+    convCtx.town = ctx.town;
+    convCtx.street = ''; // clear stale street so "here" doesn't bleed old context
   }
   const recs=searchTransactions(ctx);
   const cutoff=evCutoff(6);
@@ -3503,11 +3953,20 @@ async function handleStreetOnly(street, ctx){
         return _words.every(w=>up.includes(w));
       });
       if(_candidates.length===1||(_candidates.length>0&&_words.length>=2)){
-        // Use most-transacted candidate
-        const _best=_candidates.reduce((a,b)=>
-          DB.resale.filter(r=>r.street_name===a.street_name).length>=
-          DB.resale.filter(r=>r.street_name===b.street_name).length?a:b);
-        found=reverseStreet(_best.street_name)||{street:_best.street_name,town:_best.town,blocks:[]};
+        // Sort by number first (lowest = most canonical), then by transaction count
+        const _sorted=_candidates.slice().sort((a,b)=>{
+          const _na=Number((a.street_name.match(/\s(\d+)/)||[0,999])[1]);
+          const _nb=Number((b.street_name.match(/\s(\d+)/)||[0,999])[1]);
+          return _na-_nb;
+        });
+        const _bestC=_sorted[0];
+        const _hasSiblings=_sorted.length>1;
+        const _foundC=reverseStreet(_bestC.street_name)||{street:_bestC.street_name,town:_bestC.town,blocks:[]};
+        if(_hasSiblings&&!_canonInput.match(/\s\d+[A-Z]?$/)){
+          _foundC._guessed=true;
+          _foundC._siblings=_sorted.map(x=>x.street_name);
+        }
+        found=_foundC;
       }
     }
   }
@@ -3526,8 +3985,12 @@ async function handleStreetOnly(street, ctx){
   convCtx.town = found.town || convCtx.town;
 
   const cut12=evCutoff(12);
-  const recs=DB.resale.filter(r=>r.street_name===found.street&&r.month>=cut12)
-    .sort((a,b)=>(b.month||'').localeCompare(a.month||''));
+  // Filter by flatType if specified in ctx
+  const _hsoFlatType=(ctx.flatType&&ctx.flatType!=='ALL TYPES')?ctx.flatType:null;
+  const recs=DB.resale.filter(r=>
+    r.street_name===found.street&&r.month>=cut12&&
+    (!_hsoFlatType||r.flat_type===_hsoFlatType)
+  ).sort((a,b)=>(b.month||'').localeCompare(a.month||''));
   const timeLabel='1 year';
 
   const allBlocks=[...new Set(DB.resale.filter(r=>r.street_name===found.street).map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b));
@@ -3550,7 +4013,21 @@ async function handleStreetOnly(street, ctx){
     mode='srch_waiting';loading=false;sbEl.disabled=false;return;
   }
 
+  // If Harvey guessed the street number — notify user, offer all siblings
+  if(found._guessed && found._siblings && found._siblings.length > 1){
+    const _sibChips = found._siblings.map(s=>({label:s.replace(/^.*?(\d+[A-Z]?)$/,'$1 — '+s),val:s}));
+    const _guessMsg = rand([
+      `You didn't specify a street number, sir — I've pulled <strong>${found.street}</strong> as it's the lowest numbered. Is this the one you meant?`,
+      `I took a guess at <strong>${found.street}</strong>, sir — no number was given. Please confirm or pick the correct one below.`,
+      `No street number given, sir, so I defaulted to <strong>${found.street}</strong>. If that's not right, select the correct one:`,
+    ]);
+    harveyMsg(_guessMsg, _sibChips);
+    speak(`I defaulted to ${found.street}, sir. Please confirm or pick the correct street number.`);
+    // Still show the data below — don't block, just notify
+  }
+
   const prices=recs.map(r=>Number(r.resale_price));
+  const avg=prices.length?Math.round(prices.reduce((a,b)=>a+b,0)/prices.length):0;
   const median=prices.slice().sort((a,b)=>a-b)[Math.floor(prices.length/2)];
   const rows=recs.map(r=>`<tr><td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td><td>${esc(r.flat_type)}</td><td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td><td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
 
@@ -3578,6 +4055,10 @@ async function handleStreetOnly(street, ctx){
   speak(`${recs.length} transaction${recs.length!==1?'s':''} found on ${found.street}, sir. Median price ${fmtP(median)}.`);
 
   ctx.town=found.town;ctx.street=found.street;
+  convCtx.street=found.street;convCtx.town=found.town||convCtx.town;
+  // Keep workingCtx current — "back to X" always returns to most recent street
+  workingCtx._activeMode='search';
+  saveWorkingCtx({street:found.street,town:found.town||ctx.town},null);
 
   setTimeout(()=>{
     const nudgeHtml=`If I may, sir — if you could kindly confirm a few more details, I can get you a proper estimated value for your specific unit.<br><br>
@@ -3589,12 +4070,13 @@ async function handleStreetOnly(street, ctx){
       {label:'SEARCH WHOLE TOWN',val:`recent ${found.town}`}
     ]);
     speak(`I have ${allBlocks.length} blocks on this street, sir. Click one to estimate, or let me know your block and floor and I will get you the value.`);
-    mode='srch_waiting';loading=false;sbEl.disabled=false;
+    mode='srch_waiting';workingCtx._activeMode='search';loading=false;sbEl.disabled=false;
   },1400);
 }
 
 
 async function handleInput(){
+  _srBuffer='';
   const raw=ciEl.value.trim();
   if(!raw||loading)return;
   loading=true;sbEl.disabled=true;
@@ -3706,6 +4188,11 @@ function saveWorkingCtx(ctx, taskMode){
   if(ctx.town)   workingCtx.townCtx   = ctx.town;
   if(ctx.block)  workingCtx.blockCtx  = ctx.block;
   if(taskMode)   workingCtx.task      = taskMode;
+  // Track last 3 search contexts for multi-context clarity
+  const _entry={town:ctx.town,street:ctx.street?canonicalStreet(ctx.street):null,
+    block:ctx.block||null,task:taskMode||'search',ts:Date.now()};
+  workingCtx.lastSearches.unshift(_entry);
+  if(workingCtx.lastSearches.length>3) workingCtx.lastSearches.pop();
 }
 
 function restoreWorkingCtx(ctx){
@@ -3716,7 +4203,8 @@ function restoreWorkingCtx(ctx){
 }
 
 function clearWorkingCtx(){
-  workingCtx = {task:null,streetCtx:null,townCtx:null,blockCtx:null,
+  workingCtx = {task:null,_activeMode:null,streetCtx:null,townCtx:null,blockCtx:null,lastSearches:[],
+  _lastReplyHash:null,_sameReplyCount:0,
     lastQuestion:null,lastDataResult:null,sidetrackCount:0,sidetrackTopic:null,pendingFields:[]};
 }
 
@@ -3836,6 +4324,28 @@ function sidetrackRecovery(){
   ]);
 }
 
+// ══ QUESTION CONTEXT TRACKER ══
+// Call this whenever Harvey asks the user something specific
+// type: 'confirm_street'|'confirm_town'|'confirm_continue'|'provide_block'|'provide_floor'|'provide_flattype'
+function askQuestion(type, ref, chips, msg){
+  workingCtx.lastQuestion = {type, ref, ts: Date.now()};
+  harveyMsg(msg, chips);
+  speak(msg.replace(/<[^>]*>/g,'').slice(0,180));
+}
+
+// Reply hash for repeat detection
+function _replyHash(msg){ return msg?msg.replace(/\s+/g,'').slice(0,40):''; }
+function _checkRepeat(msg){
+  const h=_replyHash(msg);
+  if(h===workingCtx._lastReplyHash){
+    workingCtx._sameReplyCount=(workingCtx._sameReplyCount||0)+1;
+  } else {
+    workingCtx._sameReplyCount=0;
+    workingCtx._lastReplyHash=h;
+  }
+  return workingCtx._sameReplyCount;
+}
+
 // ══ CANONICAL STREET RESOLVER ══
 // Resolves any abbreviated/typed street name to the exact DB form
 // e.g. "CLEMENTI WST ST 1" → "CLEMENTI WEST ST 1" (how DB stores it)
@@ -3871,6 +4381,17 @@ function canonicalStreet(raw){
 }
 
 async function _handleInputInner(raw){
+  // ══ SYSTEM COMMANDS — checked before anything else ══
+  if(/^use whisper$|^whisper mode$|^better voice$|^upgrade voice$/i.test(raw.trim())){
+    if(!_wReady&&!_wLoading){
+      harveyMsg('Loading Whisper voice engine, sir. First time takes about 30 seconds.',[{label:'CANCEL',val:'__restart__'}]);
+      speak('Loading Whisper. First time takes about thirty seconds, sir.');
+      micState='off';try{recog?.abort();}catch(e){}recogBusy=false;
+      initWhisperMode();
+    }else if(_wReady){_whisperMode=true;harveyMsg('Whisper mode active, sir. Hold the mic to speak.');}
+    else{harveyMsg('Whisper is still loading, sir. Please wait.');}
+    loading=false;sbEl.disabled=false;return;
+  }
   // ══ INTENT CLASSIFIER — runs first, always ══
   const _intent = classifyIntent(raw, workingCtx);
   updatePersona(raw, _intent);
@@ -3915,6 +4436,46 @@ async function _handleInputInner(raw){
   }
 
   // ── Option C: Debug overlay ──
+  // ── DIRECT CHIP COMMANDS — intercept before any routing ──
+  // These are button values that must route immediately without NLP processing
+  if(/^(search|resale|resale transactions|recent|browse|look up|show transactions)$/i.test(raw.trim())){
+    const _swTown=workingCtx.townCtx||convCtx.town||null;
+    const _swStreet=workingCtx.streetCtx||convCtx.street||null;
+    _showSearchCard(_swTown, null, _swStreet);
+    loading=false;sbEl.disabled=false;return;
+  }
+
+  // "lets get back" / "back to work" / "back" alone → resume like continue
+  if(/^(?:lets|let.s)?\s*(?:get\s+)?back(?:\s+to\s+(?:it|work|search|data|this))?$|^back to work$|^get back$/i.test(raw.trim())){
+    const _backStreet=workingCtx.streetCtx||convCtx.street;
+    const _backTown=workingCtx.townCtx||convCtx.town;
+    if(_backStreet){
+      ctx.street=_backStreet;ctx.town=_backTown||ctx.town;
+      await handleStreetOnly(_backStreet,ctx);return;
+    } else if(_backTown){
+      ctx.town=_backTown;ctx.isEV=false;mode='srch_waiting';runSearch();return;
+    }
+    // No context — show "lost the thread" card with reinitialise option
+    const _lostMsg=rand([
+      `I seem to have lost the thread entirely, sir — no previous search is on record. Shall we start fresh?`,
+      `My records don't show a previous search to resume, sir. A clean start might serve us better here.`,
+      `I'm afraid I've lost track of where we were, sir. Let us reinitialise and begin properly.`,
+    ]);
+    harveyMsg(_lostMsg,[
+      {label:'RESALE TRANSACTIONS',val:'search'},
+      {label:'ESTIMATE VALUATION',val:'estimate value'},
+      {label:'↺ REINITIALISE HARVEY',val:'__restart__'},
+    ]);
+    speak(_lostMsg.replace(/<[^>]*>/g,'').slice(0,160));
+    loading=false;sbEl.disabled=false;return;
+  }
+
+  if(/^(search new|new search|different area|new area|not in here|none of these|other town|other area|not here|change town)$/i.test(raw.trim())){
+    ctx={};convCtx={};mode='menu';
+    _showSearchCard(null, null);
+    loading=false;sbEl.disabled=false;return;
+  }
+
   // ── CONTINUE chip handler — resume last search/EV ──
   if(/^(?:(?:then|ok|right|alright|so|yeah|yea|sure|please|lah)\s+)?(?:continue|lets continue|carry on|go on|resume|back to it|proceed|yes please|go ahead)(?:\s+(?:lah|please|sir))?$/i.test(raw.trim())){
     const _resumeStreet=workingCtx.streetCtx||convCtx.street;
@@ -3937,10 +4498,69 @@ async function _handleInputInner(raw){
     }
   }
 
+  // ── CHIP: TRY DIFFERENT UNIT — clear block/floor, keep street/flatType ──
+  if(raw==='__estimatenew__'){
+    const _newCtx={...convCtx,isEV:true};
+    _newCtx.block='';_newCtx.floor=undefined;_newCtx.leaseYear=undefined;
+    ctx={..._newCtx};
+    mode='ev_waiting';
+    harveyMsg(rand([
+      `Of course, sir. Same street and flat type — just tell me the block number and floor.`,
+      `Right away, sir. Which block and floor for your next unit?`,
+      `New unit, same area — just give me the block number and floor, sir.`,
+    ]),[{label:'⚙ CHANGE DETAILS',val:'__changedetails__'},{label:'↺ START FRESH',val:'__restart__'}]);
+    speak('Which block and floor for your next unit, sir?');
+    loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── CHIP: CHANGE DETAILS — must fire before mode checks ──
+  if(raw==='__changedetails__'){
+    const _evCtx={...convCtx};_evCtx.isEV=true;
+    if(!_evCtx.block&&ctx.block) _evCtx.block=ctx.block;
+    if(!_evCtx.floor&&ctx.floor) _evCtx.floor=ctx.floor;
+    if(!_evCtx.flatType&&ctx.flatType) _evCtx.flatType=ctx.flatType;
+    if(!_evCtx.size&&ctx.size) _evCtx.size=ctx.size;
+    if(!_evCtx.leaseYear&&ctx.leaseYear) _evCtx.leaseYear=ctx.leaseYear;
+    const _cdMsg=rand([
+      `Of course, sir. Here are the details — adjust anything and press Estimate Value:`,
+      `Right away, sir. Change what you need and hit Estimate Value:`,
+      `Here we go, sir — adjust and re-run:`,
+    ]);
+    harveyMsg(_cdMsg+'<br><br>'+buildHudForm(_evCtx),[{label:'↺ START FRESH',val:'__restart__'}]);
+    speak(_cdMsg.replace(/<[^>]*>/g,'').slice(0,120));
+    mode='ev_confirm';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── SEARCH CARD with town prefill — from "CHANGE STREET" chip ──
+  if(/^__searchcard_(.*)__$/.test(raw.trim())){
+    const _scTown=raw.match(/^__searchcard_(.*)__$/)[1]||workingCtx.townCtx||convCtx.town;
+    const _scStreet=workingCtx.streetCtx||convCtx.street||null;
+    // Pass pending analysis direction so SEARCH button fires correctly
+    const _scPend=convCtx._analysisPending;
+    const _scDir=_scPend?(_scPend.isHighest?'highest':'lowest'):null;
+    const _scFt=_scPend?null:null; // flat type from pending (null = let user choose)
+    _showSearchCard(_scTown||null, _scFt, _scStreet, _scDir);
+    loading=false;sbEl.disabled=false;return;
+  }
+
+  if(raw==='__voicedebug__'||raw==='voice debug'||raw==='debug voice'){
+    const vdbg=document.getElementById('vdbg');
+    if(vdbg){vdbg.style.display='block';initVoiceDebug();}
+    harveyMsg('Voice debug panel opened, sir. Check bottom-right corner.',
+      [{label:'CLOSE DEBUG',val:'close debug'}]);
+    loading=false;sbEl.disabled=false;return;
+  }
+  if(raw==='close debug'){
+    const vdbg=document.getElementById('vdbg');if(vdbg)vdbg.style.display='none';
+    loading=false;sbEl.disabled=false;return;
+  }
+
   if(raw==='__debug__'||raw==='debug'){
     const _dbState={
       mode, workingCtx, harveyPersona,
       convStyle:harveyPersona.conversationStyle,
+      activeMode:workingCtx._activeMode||'none',
+      lastSearches:workingCtx.lastSearches,
       chatRatio:Math.round(harveyPersona.chatRatio*100)+'%',
       turnHistory:harveyPersona.turnHistory.join(','),
       convCtx:{town:convCtx.town,street:convCtx.street,block:convCtx.block},
@@ -4054,6 +4674,24 @@ async function _handleInputInner(raw){
   // Fix #1: praise ('good work','great work') skips chitchat — won't route to career topic
   const chitChatEarly=(_intent&&_intent.type===INTENT.PRAISE)?null:harveyChitChat(raw,convCtx);
   if(chitChatEarly){
+    const _ccRepeat=_checkRepeat(chitChatEarly.slice(0,30));
+    if(_ccRepeat>=2){
+      const _ccWhere=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+      const _ccRedir=rand([
+        `I suspect we may have drifted somewhat, sir. Allow me to reset — where would you like to go?`,
+        `I may have misread the room entirely, sir. Let us recalibrate — you call the direction.`,
+        `Something tells me we are talking past each other, sir. No fault assigned. Shall we recalibrate?`,
+      ]);
+      harveyMsg(_ccRedir,[
+        ...(_ccWhere?[{label:`↗ BACK TO ${String(_ccWhere).slice(0,15).toUpperCase()}`,val:'continue'}]:[]),
+        {label:'RESALE SEARCH',val:'search'},
+        {label:'ESTIMATE VALUE',val:'estimate value'},
+        {label:'↺ REINITIALISE',val:'__restart__'},
+      ]);
+      speak(_ccRedir.replace(/<[^>]*>/g,'').slice(0,160));
+      workingCtx._sameReplyCount=0;workingCtx._lastReplyHash=null;
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    }
     const prevMode=mode;
     if(chitChatEarly&&typeof chitChatEarly==='object'&&chitChatEarly._schoolResponse){
       harveyMsg(chitChatEarly.msg, chitChatEarly.chips);
@@ -4132,6 +4770,11 @@ async function _handleInputInner(raw){
   }
 
 
+  // ── Pre-check: analysis commands escape srch_waiting to run as analysis ──
+  if(mode==='srch_waiting'&&/\b(lowest|cheapest|most affordable|most expensive|highest price|highest flat|highest priced|lowest priced|lowest flat)\b/i.test(raw)){
+    mode='menu'; // route to analysis handler below
+  }
+
   if(mode==='ev_waiting'||mode==='srch_waiting'){
     const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
     const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice;
@@ -4151,13 +4794,39 @@ async function _handleInputInner(raw){
       await new Promise(r=>setTimeout(r,500));
     }
 
-    if(isReaction&&!hasNewInfo){
-      harveyMsg(rand([
-        `I'm afraid the data presents itself as such, sir. The estimate reflects actual recorded transactions. A professional agent may give you a fuller picture — <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here</a>.`,
-        `The numbers are what they are, sir — I'm merely reflecting recorded transactions. Feel free to <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">reach out on WhatsApp</a> for a more personal assessment.`,
-        `I understand, sir — but the data presents itself as such. Market conditions on the ground can differ. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat with us on WhatsApp</a> for a grounded view.`
-      ]),[{label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`},{label:'TRY A DIFFERENT UNIT',val:'estimate value'}]);
-      speak(`I'm afraid the data presents itself as such, sir.`);return;
+    // Don't treat analysis command words as reactions to displayed data
+    const _isAnalysisWord=/\b(lowest|cheapest|most affordable|highest|most expensive)\b/i.test(raw);
+    if(isReaction&&!hasNewInfo&&!_isAnalysisWord){
+      const _isCheapReact=/\b(cheap|low|too low|so low|affordable|not expensive|reasonable|value|good price|nice price|cheap la|cheap ah|cheap one|not bad)\b/i.test(raw);
+      const _isExpReact=/\b(ex|expensive|pricey|costly|too much|so high|so ex|why so|cannot afford|unaffordable|steep|outrageous|ridiculous|shiok meh|for real|serious|really|joking)\b/i.test(raw);
+      const _backRef=workingCtx.streetCtx||ctx.street||ctx.town;
+      const _backChips=[
+        {label:'SEE THE TRANSACTIONS',val:`recent ${ctx.flatType||''} ${ctx.block?'block '+ctx.block:''} ${ctx.street||ctx.town||''}`.trim()},
+        {label:'TRY A DIFFERENT UNIT',val:'estimate value'},
+        ...(_backRef?[{label:`↗ BACK TO ${String(_backRef).slice(0,18).toUpperCase()}`,val:_backRef}]:[])
+      ];
+      if(_isCheapReact){
+        harveyMsg(rand([
+          `I'm glad the numbers are working in your favour, sir. In fact, very well — affordability is an outmost concern in public housing. Prices need to be as such in the grand scheme of the HDB plan.`,
+          `Affordable is good news, sir. The HDB mandate is precisely this — broad access to quality public housing. The market is doing its job here, and so is the estate.`,
+          `That is the beauty of the programme, sir. Public housing exists to be accessible, and the data reflects that intent. Singapore's housing model is quite remarkable when you step back and look at it.`,
+        ]),_backChips);
+        speak(rand([`Affordable indeed, sir. That is the HDB mandate at work.`,`Good value, sir — exactly as intended.`,`Accessibility by design, sir.`]));
+      } else if(_isExpReact){
+        harveyMsg(rand([
+          `I'm afraid the data presents itself as such, sir. Prime locations command a premium — the market has spoken. A professional assessment may reveal options. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+          `The numbers are what they are, sir. Location, floor, and lease remaining are doing most of the work here. I can show you the comparable transactions if that helps. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Or speak to an agent →</a>`,
+          `Noted, sir — and the frustration is valid. The market has been running warm. I can pull the transactions so you see exactly what's driving this figure. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">WhatsApp us here →</a>`,
+        ]),_backChips);
+        speak(`The data presents itself as such, sir. The market has been running warm.`);
+      } else {
+        harveyMsg(rand([
+          `I understand, sir — but the data presents itself as such. Market conditions on the ground can differ. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat with us on WhatsApp</a> for a grounded view.`,
+          `The numbers are what they are, sir — recorded transactions, no editorialising. <a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Reach out on WhatsApp</a> for a personal assessment.`,
+        ]),_backChips);
+        speak(`The data presents itself as such, sir.`);
+      }
+      return;
     }
 
     if(!hasNewInfo){
@@ -4208,6 +4877,26 @@ async function _handleInputInner(raw){
           harveyMsg(_warmReply,[{label:'CONTINUE',val:'continue'},{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
           speak(_warmReply.replace(/<[^>]*>/g,'').slice(0,120));return;
         }
+        // Track repeat field errors — after 2 misses, redirect wittily
+        convCtx._fieldErrCount = (convCtx._fieldErrCount||0)+1;
+        convCtx._fieldErrLast = nextMissing;
+        if(convCtx._fieldErrCount >= 2){
+          convCtx._fieldErrCount=0;
+          const _where=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+          const _wittyErr=rand([
+            `My memory may have failed me, sir — forgive me. What were we working on? Perhaps you could gently remind me.`,
+            `I do apologise, sir. I seem to have lost the thread entirely. Shall we restart this valuation from scratch?`,
+            `Two attempts and I'm still lost, sir. I'll be honest — a fresh start might serve us better here.`,
+          ]);
+          const _errChips=_where?[
+            {label:'RESTART VALUATION',val:'estimate value'},
+            {label:`↗ BACK TO ${String(_where).slice(0,18).toUpperCase()}`,val:_where},
+            {label:'START FRESH',val:'__restart__'},
+          ]:[{label:'RESTART VALUATION',val:'estimate value'},{label:'START FRESH',val:'__restart__'}];
+          harveyMsg(_wittyErr,_errChips);
+          speak(_wittyErr.replace(/<[^>]*>/g,'').slice(0,180));
+          mode='menu';loading=false;sbEl.disabled=false;return;
+        }
         harveyMsg(`I couldn't find the ${fieldName} from that, sir — ${example}.`);
         speak(`I couldn't find the ${fieldName} from that, sir.`);return;
       }
@@ -4228,6 +4917,8 @@ async function _handleInputInner(raw){
     if(parsed.maxPrice) ctx.maxPrice=parsed.maxPrice;
     if(parsed.minPrice) ctx.minPrice=parsed.minPrice;
     enrichCtx(ctx);
+    // Clear error counter when user provides valid data
+    if(parsed.block||parsed.floor||parsed.flatType||parsed.street||parsed.size) convCtx._fieldErrCount=0;
     if(ctx.flatType&&!ctx.size){const dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);if(dbSz){ctx.size=dbSz;ctx.sizeFromDB=true;}else{ctx.size=TYPICAL_SIZE[ctx.flatType]||93;ctx.sizeInferred=true;}}
     if(mode==='ev_waiting'){
       const still=buildMissingPrompt(ctx).filter(s=>!s.includes('optional')&&!s.includes('I can find')&&!s.includes('mid-floor'));
@@ -4241,12 +4932,7 @@ async function _handleInputInner(raw){
   }
 
 
-  if(raw==='__changedetails__'){
-    userMsg('Change details');
-    harveyMsg(`Of course, sir. Here are the details used — adjust anything and press Estimate Value to re-run:<br><br>${buildHudForm(ctx)}`);
-    speak('Here are the details, sir. Adjust and re-run whenever ready.');
-    mode='ev_confirm';return;
-  }
+
 
 
   if(/^recent (flattype .+ all blocks|all blocks) /i.test(raw)){
@@ -4296,35 +4982,147 @@ async function _handleInputInner(raw){
   if(isLowest||isHighest){
     const p2=parseQuery(normalizeSpeech(raw));
     const flatFilter=p2.flatType||null;
-    // P9/P10: town/street-specific analysis
-    const _analyseTown=p2.town||null;
-    const _analyseStreet=p2.street?reverseStreet(p2.street)?.street:null;
+    // Context inheritance: "here", explicit town/street, OR short follow-up inherits convCtx
+    const _usesHere=/\b(here|this area|this street|this town|this place|in here|right here)\b/i.test(raw);
+    const _isFollowUp=raw.trim().split(/\s+/).length<=6&&!p2.town&&!p2.street;
+    const _inheritCtx=_usesHere||_isFollowUp;
+    // When user explicitly names a town → use that town only, don't bleed in the previous street
+    // e.g. "lowest in clementi" → CLEMENTI town, not CLEMENTI AVE 1 from last search
+    const _userNamedTown=!!p2.town;
+    const _analyseTown=p2.town||(_inheritCtx?(convCtx.town||workingCtx.townCtx):null)||null;
+    // Only inherit street if: user used "here" keyword, OR input has NO location at all (pure follow-up)
+    // Do NOT inherit street if user named a town explicitly
+    const _analyseStreetRaw=p2.street||
+      ((_usesHere||(_isFollowUp&&!_userNamedTown))&&(convCtx.street||workingCtx.streetCtx)?
+        (convCtx.street||workingCtx.streetCtx):null)||null;
+    const _analyseStreet=_analyseStreetRaw?reverseStreet(_analyseStreetRaw)?.street||canonicalStreet(_analyseStreetRaw):null;
+    // Flag if context was inferred (not explicitly stated by user)
+    const _contextInferred=_inheritCtx&&!p2.town&&!p2.street&&(_analyseTown||_analyseStreet);
+
+    // If no flat type given, prompt user to pick — unless they've already been prompted
+    if(!flatFilter && !convCtx._analysisFlatAsked){
+      convCtx._analysisFlatAsked=true;
+      convCtx._analysisPending={isLowest,isHighest,_analyseTown,_analyseStreet,raw};
+      // Save as lastQuestion so natural language flat type replies are caught
+      workingCtx.lastQuestion={type:'pending_analysis',dir:isHighest?'highest':'lowest',
+        scope:_analyseStreet||_analyseTown,ts:Date.now()};
+      const _scopeLabel=_analyseStreet||_analyseTown||'Singapore';
+      const _dir=isHighest?'highest':'lowest';
+      const _ctx=_analyseStreet||_analyseTown||'';
+      const _sep=_ctx?' ':'';
+      // Context-specific chips: if scope is a street, offer expand options too
+      const _streetCtxLabel=_analyseStreet?`${_dir.toUpperCase()} ON ${_analyseStreet}`:'';
+      const _townCtxLabel=_analyseTown&&!_analyseStreet?`${_dir.toUpperCase()} IN ${_analyseTown}`:'';
+      const _typeChips=[
+        {label:'2 ROOM',val:`${_dir} 2-room${_sep}${_ctx}`},
+        {label:'3 ROOM',val:`${_dir} 3-room${_sep}${_ctx}`},
+        {label:'4 ROOM',val:`${_dir} 4-room${_sep}${_ctx}`},
+        {label:'5 ROOM',val:`${_dir} 5-room${_sep}${_ctx}`},
+        {label:'EXECUTIVE',val:`${_dir} executive${_sep}${_ctx}`},
+        {label:'ALL TYPES',val:`${_dir} all types${_sep}${_ctx}`},
+        ...(_analyseStreet&&_analyseTown?[
+          {label:`EXPAND TO ${_analyseTown}`,val:`${_dir} all types ${_analyseTown}`},
+        ]:[]),
+        ...(_analyseStreet?[
+          {label:'CHANGE STREET',val:`__searchcard_${_analyseTown||''}__`},
+        ]:[]),
+        ...(_ctx?[{label:'SINGAPORE-WIDE',val:`${_dir} all types`}]:[]),
+      ];
+      // When context inferred, prepend street-level and town-level action chips
+      const _hasStreetCtx=_contextInferred&&_analyseStreet&&_analyseTown;
+      const _ctxActionChips=_contextInferred&&(_analyseStreet||_analyseTown)?[
+        ...(_analyseStreet?[
+          {label:`▶ ${_analyseStreet}`,val:`${_dir} all types ${_analyseStreet}`},
+        ]:[]),
+        ...(_analyseTown?[
+          {label:`⬡ ALL OF ${_analyseTown}`,val:`${_dir} all types ${_analyseTown}`},
+        ]:[]),
+        {label:'🔍 DIFFERENT AREA',val:'search'},
+      ]:[];
+      // If context inferred, tell user AND offer format guide
+      let _promptMsg;
+      if(_contextInferred){
+        const _ctxLabel=_analyseStreet||_analyseTown;
+        // Witty 3-variation confirm — acknowledges the street history, offers both paths
+        // When we have a street in context, ask if they mean the street or the whole town
+        const _hasStreetInCtx=!!_analyseStreet;
+        const _townOfStreet=_analyseTown||convCtx.town||workingCtx.townCtx;
+        if(_hasStreetInCtx&&_townOfStreet){
+          _promptMsg=rand([
+            `By that I take it you mean <strong>${_analyseStreet}</strong>, sir — the wonderful street itself. Or did you mean the whole of <strong>${_townOfStreet}</strong>?`,
+            `We were on <strong>${_analyseStreet}</strong>, sir — is that the one? Or shall I look at all of <strong>${_townOfStreet}</strong>?`,
+            `<strong>${_analyseStreet}</strong> rings a bell, sir. That street, or the broader <strong>${_townOfStreet}</strong> picture?`,
+          ]);
+        } else {
+          _promptMsg=rand([
+            `By that I take it you mean <strong>${_ctxLabel}</strong>, sir — the wonderful ${_analyseStreet?'street':'town'} itself. Which flat type for the ${_dir}?`,
+            `I believe you're after the ${_dir} in <strong>${_ctxLabel}</strong>, sir — we were just there. Shall I confirm that, or were you thinking of somewhere else entirely?`,
+            `${_analyseStreet?`<strong>${_ctxLabel}</strong> rings a bell, sir`:`<strong>${_ctxLabel}</strong> — that's where we were, sir`}. Which flat type for the ${_dir} there?`,
+          ]);
+        }
+        // Save question context so "yes" confirms
+        // Save street-level question if we have a street
+        const _iqType=_analyseStreet?'confirm_street':'confirm_town';
+        workingCtx.lastQuestion={type:_iqType,ref:_ctxLabel,ts:Date.now()};
+      } else {
+        _promptMsg=`Which flat type for the <strong>${_dir}</strong> in <strong>${_scopeLabel}</strong>, sir?`;
+      }
+      // If street is specifically named, add a format hint
+      const _allChips=[..._ctxActionChips,..._typeChips];
+      if(_analyseStreet&&!_contextInferred){
+        const _fmtHint=rand([
+          `<br><em style="color:var(--t2);font-size:10px;font-family:var(--mono)">TIP: You can also type directly — e.g. "highest 5-room ${_analyseStreet}"</em>`,
+          `<br><em style="color:var(--t2);font-size:10px;font-family:var(--mono)">HINT: "lowest 4-room ${_analyseStreet}" works too if you prefer typing it.</em>`,
+          `<br><em style="color:var(--t2);font-size:10px;font-family:var(--mono)">I understand better in this format, sir: "highest 4-room ${_analyseStreet}"</em>`,
+        ]);
+        harveyMsg(_promptMsg+_fmtHint,_allChips);
+      } else {
+        harveyMsg(_promptMsg,_allChips);
+      }
+      speak(`Which flat type for the ${_dir} in ${_scopeLabel}, sir?`);
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    }
+    // Always clear the prompt flag before running analysis
+    delete convCtx._analysisFlatAsked;
+    delete convCtx._analysisPending;
+    // "all types" means no filter
+    const _effectiveFilter = flatFilter==='ALL TYPES'?null:flatFilter;
+
     const topN=10;
     const cutoff12=evCutoff(12);
     let pool=DB.resale.filter(r=>r.month>=cutoff12);
-    // Filter by town or street if specified
     if(_analyseStreet) pool=pool.filter(r=>r.street_name===_analyseStreet);
     else if(_analyseTown) pool=pool.filter(r=>r.town===_analyseTown);
-    if(flatFilter)pool=pool.filter(r=>r.flat_type===flatFilter);
+    if(_effectiveFilter)pool=pool.filter(r=>r.flat_type===_effectiveFilter);
     pool.sort((a,b)=>isLowest?Number(a.resale_price)-Number(b.resale_price):Number(b.resale_price)-Number(a.resale_price));
     const top=pool.slice(0,topN);
     if(!top.length){harveyMsg(`No results found, sir. Try a different flat type.`);return;}
     const _scope=_analyseStreet?` · ${_analyseStreet}`:_analyseTown?` · ${_analyseTown}`:' · SINGAPORE-WIDE';
-    const label=isLowest?`LOWEST PRICED${flatFilter?' '+flatFilter:''}${_scope}`:`HIGHEST PRICED${flatFilter?' '+flatFilter:''}${_scope}`;
+    const label=isLowest?`LOWEST PRICED${_effectiveFilter?' '+_effectiveFilter:''}${_scope}`:`HIGHEST PRICED${_effectiveFilter?' '+_effectiveFilter:''}${_scope}`;
     const prices=top.map(r=>Number(r.resale_price));
-    const rows=top.map((r,i)=>`<tr>
-      <td style="font-family:var(--mono);color:var(--t3);font-size:10px">${i+1}</td>
-      <td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}</td>
-      <td>${esc(r.town)}</td><td>${esc(r.flat_type)}</td>
-      <td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td>
-      <td class="pc">${fmtP(r.resale_price)}</td></tr>`).join('');
+    // Multi-street: collect unique streets in result, annotate top entry per street
+    const _streetSet=new Set(top.map(r=>r.street_name));
+    const _topPerStreet={};top.forEach(r=>{if(!_topPerStreet[r.street_name])_topPerStreet[r.street_name]=r;});
+    const rows=top.map((r,i)=>{
+      const _isTopOfStreet=_topPerStreet[r.street_name]===r;
+      return `<tr${_isTopOfStreet&&_streetSet.size>1?' style="border-top:1px solid var(--b3)"':''}>
+        <td style="font-family:var(--mono);color:var(--t3);font-size:10px">${i+1}</td>
+        <td>${esc(r.month)}</td><td>BLK ${esc(r.block)} ${esc(r.street_name)}${_isTopOfStreet&&_streetSet.size>1?` <span style="font-size:9px;color:var(--a);font-family:var(--mono)">▲ TOP</span>`:''}</td>
+        <td>${esc(r.town)}</td><td>${esc(r.flat_type)}</td>
+        <td>${esc(r.storey_range)}</td><td>${esc(r.floor_area_sqm)}m²</td>
+        <td class="pc">${fmtP(r.resale_price)}</td></tr>`;
+    }).join('');
+    const _streetSummary=_streetSet.size>1?`<div style="font-size:10px;color:var(--t2);font-family:var(--mono);margin-bottom:8px">ACROSS ${_streetSet.size} STREETS: ${[..._streetSet].slice(0,5).join(' · ')}${_streetSet.size>5?' + MORE':''}</div>`:'';
     document.getElementById('welcome')?.remove();
     const d2=document.createElement('div');d2.className='msg-ai';d2.style.maxWidth='100%';
-    d2.innerHTML=`<span class="mlbl">// SINGAPORE · ${esc(label)} · LAST 12 MONTHS</span>
-      <div class="mbub">Here are the <strong>${topN}</strong> ${isLowest?'most affordable':'highest priced'}${flatFilter?' <strong>'+flatFilter.toLowerCase()+'</strong>':''} flats transacted in Singapore over the last year, sir.</div>
+    const _scopeHeader=_analyseStreet?_analyseStreet:_analyseTown?_analyseTown:'SINGAPORE';
+    const _scopeWide=_analyseStreet?_analyseStreet:_analyseTown?_analyseTown:'SINGAPORE-WIDE';
+    const _scopeIntro=_analyseStreet?`in <strong>${_analyseStreet}</strong>`:_analyseTown?`in <strong>${_analyseTown}</strong>`:`in Singapore`;
+    d2.innerHTML=`<span class="mlbl">// ${esc(_scopeHeader)} · ${esc(label)} · LAST 12 MONTHS</span>
+      <div class="mbub">Here are the <strong>${topN}</strong> ${isLowest?'most affordable':'highest priced'}${_effectiveFilter?' <strong>'+_effectiveFilter.toLowerCase()+'</strong>':''} flats transacted ${_scopeIntro} over the last year, sir.</div>
       <div class="rwrap"><div class="rcard">
-        <div class="rh"><span class="rtitle">⬡ ${esc(label)} · SINGAPORE-WIDE</span><span class="rcnt">TOP ${topN} · LAST 12 MONTHS</span></div>
-        <div style="overflow-x:auto"><table><thead><tr><th>#</th><th>MONTH</th><th>BLOCK & STREET</th><th>TOWN</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="rh"><span class="rtitle">⬡ ${esc(label)} · ${esc(_scopeWide)}</span><span class="rcnt">TOP ${topN} · LAST 12 MONTHS</span></div>
+        ${_streetSummary}<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>MONTH</th><th>BLOCK & STREET</th><th>TOWN</th><th>TYPE</th><th>STOREY</th><th>AREA</th><th>PRICE</th></tr></thead><tbody>${rows}</tbody></table></div>
       </div>
       <div class="srow" style="grid-template-columns:repeat(4,1fr)">
         <div class="sc"><span class="svv">${fmtP(Math.round(prices.reduce((s,p)=>s+p,0)/prices.length))}</span><span class="sll">AVG</span></div>
@@ -4333,9 +5131,21 @@ async function _handleInputInner(raw){
         <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
       </div></div>`;
     msgsEl.appendChild(d2);bot();
-    speak(isLowest?`The most affordable${flatFilter?' '+flatFilter.toLowerCase():''} flat transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir.`:`The most expensive${flatFilter?' '+flatFilter.toLowerCase():''} flat went for ${Math.round(prices[0]/1000)} thousand dollars, sir.`);
-    setTimeout(()=>harveyMsg('Anything else, sir?',[{label:'ESTIMATE VALUATION',val:'estimate value'},...(flatFilter?[{label:`ALL ${flatFilter} PRICES`,val:`recent ${flatFilter}`}]:[]),{label:'SEARCH BY TOWN',val:'search'}]),1400);
-    mode='menu';return;
+    speak(isLowest?`The most affordable${_effectiveFilter?' '+_effectiveFilter.toLowerCase():''} flat transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir.`:`The most expensive${_effectiveFilter?' '+_effectiveFilter.toLowerCase():''} flat went for ${Math.round(prices[0]/1000)} thousand dollars, sir. Across ${_streetSet.size} street${_streetSet.size!==1?'s':''}.`);
+    const _aftStreet=_analyseStreet;
+    const _aftTown=_analyseTown;
+    const _aftType=_effectiveFilter;
+    const _aftDir=isHighest?'highest':'lowest';
+    setTimeout(()=>harveyMsg('Anything else, sir?',[
+      {label:'ESTIMATE VALUATION',val:'estimate value'},
+      ...(_aftType?[{label:`ALL ${_aftType} PRICES`,val:`recent ${_aftType}${_aftStreet?' '+_aftStreet:_aftTown?' '+_aftTown:''}`}]:[]),
+      // Change flat type — re-run same location with different type
+      {label:'CHANGE FLAT TYPE',val:`${_aftDir} all types${_aftStreet?' '+_aftStreet:_aftTown?' '+_aftTown:''}`},
+      ...(_aftStreet&&_aftTown?[{label:`EXPAND TO ${_aftTown}`,val:`${_aftDir} all types ${_aftTown}`}]:[]),
+      ...(_aftStreet||_aftTown?[{label:'CHANGE STREET',val:`__searchcard_${_aftTown||''}__`}]:[]),
+      {label:'SEARCH BY TOWN',val:'search'},
+    ]),1400);
+    mode='menu';workingCtx._activeMode='analysis';return;
   }
 
 
@@ -4353,6 +5163,26 @@ async function _handleInputInner(raw){
     ]);
     harveyMsg(_confReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
     speak(_confReply.replace(/<[^>]*>/g,'').slice(0,200));
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── WHICH MODE / WHAT ARE WE DOING ──
+  if(/which (mode|category|section|flow|task|part)|what are we (doing|on|working on|looking at)|where are we|what (mode|task|section) (are we|is this)/i.test(raw)){
+    const _am=workingCtx._activeMode;
+    const _ref=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+    const _modeLabel=_am==='ev'?'Estimate Valuation':_am==='analysis'?'Price Analysis':_am==='search'?'Resale Search':'no active session';
+    const _modeReply=rand([
+      `We are in <strong>${_modeLabel}</strong>, sir${_ref?' — currently on <strong>'+String(_ref).toUpperCase()+'</strong>':''}.`,
+      `${_modeLabel}, sir${_ref?' — last looked at <strong>'+String(_ref).toUpperCase()+'</strong>':''}.`,
+      `Current session: <strong>${_modeLabel}</strong>${_ref?', focused on <strong>'+String(_ref).toUpperCase()+'</strong>':''}, sir.`,
+    ]);
+    const _modeChips=_am?[
+      {label:`CONTINUE ${_modeLabel.toUpperCase()}`,val:'continue'},
+      {label:'SWITCH TO SEARCH',val:'search'},
+      {label:'SWITCH TO EV',val:'estimate value'},
+    ]:[{label:'RESALE SEARCH',val:'search'},{label:'ESTIMATE VALUE',val:'estimate value'},{label:'ANALYSIS',val:'highest price'}];
+    harveyMsg(_modeReply,_modeChips);
+    speak(_modeReply.replace(/<[^>]*>/g,'').slice(0,160));
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
@@ -4506,9 +5336,113 @@ async function _handleInputInner(raw){
     speak(_jReply.replace(/<[^>]*>/g,'').slice(0,200));
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
+  // ── PENDING ANALYSIS INTERCEPT — catch flat type reply to analysis prompt ──
+  // When Harvey asked "which flat type for highest/lowest in X?" and user responds
+  // with a flat type ("3 room", "all", "executive") or affirmation ("yes", "go")
+  const _lqPending=workingCtx.lastQuestion;
+  if(_lqPending&&_lqPending.type==='pending_analysis'&&(Date.now()-_lqPending.ts)<120000){
+    const _pendFt=parsed.flatType||
+      (/\ball\b|\ball types\b|\bany\b|\bno filter\b/i.test(raw)?'ALL TYPES':null)||
+      (/\byes\b|\bsure\b|\bgo\b|\bokay\b|\bok\b|\bshow\b|\bjust go\b|\bproceed\b/i.test(raw)&&convCtx._analysisPending?'ALL TYPES':null);
+    if(_pendFt){
+      const _pend=convCtx._analysisPending;
+      const _dir=_lqPending.dir;
+      const _pendStreet=_pend?._analyseStreet||null;
+      const _pendTown=_pend?._analyseTown||null;
+      const _scope=_pendStreet||_pendTown;
+      if(_dir&&_scope){
+        workingCtx.lastQuestion=null;
+        delete convCtx._analysisFlatAsked;
+        delete convCtx._analysisPending;
+        // Build analysis pool directly — bypass normalizeSpeech/stMatch garbling
+        const cutoff12=evCutoff(12);
+        let _aPool=DB.resale.filter(r=>r.month>=cutoff12);
+        if(_pendStreet) _aPool=_aPool.filter(r=>r.street_name===_pendStreet);
+        else if(_pendTown) _aPool=_aPool.filter(r=>r.town===_pendTown);
+        const _effFilter=_pendFt==='ALL TYPES'?null:_pendFt;
+        if(_effFilter) _aPool=_aPool.filter(r=>r.flat_type===_effFilter);
+        _aPool.sort((a,b)=>_dir==='lowest'?Number(a.resale_price)-Number(b.resale_price):Number(b.resale_price)-Number(a.resale_price));
+        const _top=_aPool.slice(0,10);
+        if(_top.length===0){
+          // No data — expand to town if possible
+          const _expMsg=rand([
+            `No ${_effFilter?_effFilter.toLowerCase()+' ':''}records found for the ${_dir} in <strong>${_scope}</strong> over the last year, sir. Shall I expand to ${_pendTown?`all of <strong>${_pendTown}</strong>`:'a wider search'}?`,
+            `Nothing in the last 12 months for ${_effFilter||'any flat type'} in <strong>${_scope}</strong>, sir. The area may have been quiet. Want me to try the broader ${_pendTown||'region'}?`,
+            `<strong>${_scope}</strong> shows no transactions for ${_dir} ${_effFilter?_effFilter.toLowerCase():'flats'} in the past year, sir. Shall I look at ${_pendTown?`all of <strong>${_pendTown}</strong>`:'a wider area'}?`,
+          ]);
+          const _expChips=[
+            ...(_pendTown&&_pendStreet?[{label:`EXPAND TO ${_pendTown}`,val:`${_dir} all types ${_pendTown}`}]:[]),
+            {label:'CHANGE STREET',val:`__searchcard_${_pendTown||''}__`},
+            {label:'SEARCH BY TOWN',val:'search'},
+          ];
+          workingCtx.streetCtx=_pendStreet||workingCtx.streetCtx;
+          workingCtx.townCtx=_pendTown||workingCtx.townCtx;
+          harveyMsg(_expMsg,_expChips);
+          speak(_expMsg.replace(/<[^>]*>/g,'').slice(0,180));
+          mode='menu';loading=false;sbEl.disabled=false;return;
+        }
+        // Run the analysis display inline
+        const _prices=_top.map(r=>Number(r.resale_price));
+        const _label=`${_dir==='lowest'?'LOWEST':'HIGHEST'} PRICED${_effFilter?' '+_effFilter:''}`;
+        const _scopeHdr=_pendStreet||_pendTown||'SINGAPORE';
+        workingCtx.streetCtx=_pendStreet||workingCtx.streetCtx;
+        workingCtx.townCtx=_pendTown||workingCtx.townCtx;
+        workingCtx._activeMode='analysis';
+        convCtx.street=_pendStreet||convCtx.street;
+        convCtx.town=_pendTown||convCtx.town;
+        // Use chipClick with just the direction+type+scope — stored canonically
+        const _safeScope=_pendStreet||_pendTown;
+        loading=false;sbEl.disabled=false;
+        // Route back through analysis with clean canonical input
+        // Prefix with direction AFTER location to avoid stMatch greedily capturing direction words
+        // Format: "[dir] [scope] [flattype]" where scope is already canonical
+        // Include flat type in chipClick so analysis runs without prompting again
+        // Use "in [scope]" format so stMatch doesn't greedily capture direction/type words
+        const _ftPart=_effFilter?_effFilter.toLowerCase():'all types';
+        const _chipVal=`${_dir} ${_ftPart} in ${_safeScope}`;
+        // Set analysisFlatAsked to prevent re-prompting
+        convCtx._analysisFlatAsked=true;
+        setTimeout(()=>{convCtx._analysisFlatAsked=false;chipClick(_chipVal);},50);return;
+      }
+    }
+  }
+
   const _parsedHasDataSignal=!!(parsed.town||parsed.street||parsed.block||parsed.floor||
     parsed.flatType||/transact|search|recent|sold|find|show|estimate|valuat|resale/i.test(raw));
   if(_parsedHasDataSignal){
+    // ── CONTEXT CONFLICT: user names a different location than what we had recorded ──
+    // e.g. "lets get back to punggol" but workingCtx has CLEMENTI WEST ST 1
+    const _prevRecorded=workingCtx.streetCtx||workingCtx.townCtx;
+    const _newTown=parsed.town||ctx.town;
+    const _prevTown=workingCtx.townCtx;
+    const _hasConflict=_prevRecorded&&_newTown&&_prevTown&&
+      _prevTown!==_newTown&&
+      /back|return|resume|get back/i.test(raw);
+    if(_hasConflict){
+      const _prevLabel=workingCtx.streetCtx||_prevTown;
+      // Use ONLY parsed.town for the new label — never reverseStreet here
+      // "punggol" → PUNGGOL town, not "PUNGGOL EAST" street
+      const _newLabel=parsed.street?canonicalStreet(parsed.street):_newTown;
+      const _conflictMsg=rand([
+        `Just to confirm, sir — I have <strong>${String(_prevLabel).toUpperCase()}</strong> from our last session, but you mentioned <strong>${String(_newLabel).toUpperCase()}</strong>. Which would you like me to proceed with?`,
+        `I noticed we were on <strong>${String(_prevLabel).toUpperCase()}</strong>, sir — but you're now pointing to <strong>${String(_newLabel).toUpperCase()}</strong>. Shall I switch, or was that a slip?`,
+        `Quick check, sir — recorded context is <strong>${String(_prevLabel).toUpperCase()}</strong>, new request is <strong>${String(_newLabel).toUpperCase()}</strong>. Which one shall I pull?`,
+      ]);
+      workingCtx.lastQuestion={type:'confirm_town',ref:_newLabel,ts:Date.now()};
+      harveyMsg(_conflictMsg,[
+        {label:`↗ GO TO ${String(_newLabel).slice(0,18).toUpperCase()}`,val:_newLabel},
+        {label:`↩ BACK TO ${String(_prevLabel).slice(0,18).toUpperCase()}`,val:'continue'},
+        {label:'🔄 FRESH START',val:'search new'},
+      ]);
+      speak(_conflictMsg.replace(/<[^>]*>/g,'').slice(0,180));
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    }
+
+    // If user says "back to [town]" and we have a street in working context for that town,
+    // restore that specific street rather than searching the whole town
+    if(!ctx.street&&ctx.town&&workingCtx.streetCtx&&workingCtx.townCtx===ctx.town){
+      ctx.street=workingCtx.streetCtx;
+    }
     if(ctx.street&&!ctx.isEV){
       await handleStreetOnly(ctx.street,ctx);return;
     }
@@ -4730,24 +5664,163 @@ async function _handleInputInner(raw){
     }
     const _univEmo=detectUniversalWord(raw);
     if(_univEmo){
+      const _hasPrevCtx=!!(convCtx.town||convCtx.street||workingCtx.streetCtx);
+      const _prevRef=workingCtx.streetCtx||convCtx.street||convCtx.town;
+
+      // ── ACKNOWLEDGE: short closed-end words — reply brief, act on lastQuestion ──
+      if(_univEmo==='acknowledge'){
+        const _lq=workingCtx.lastQuestion;
+        const _isAffirm=/^(yes|yep|yup|sure|correct|right|exactly|confirm|ok|okay|ya|yea|yeah|alright|go ahead|proceed|please|do it)$/i.test(raw.trim());
+        const _isDeny=/^(no|nope|nah|not really|different|other|wrong|not that)$/i.test(raw.trim());
+
+        // 1a. If user types a location that matches the pending question's context
+        //     e.g. Harvey asked "did you mean CLEMENTI WEST ST 1?" and user types "clementi west"
+        if(_lq&&(Date.now()-_lq.ts)<120000&&!_isAffirm&&!_isDeny){
+          const _rawLower=raw.toLowerCase().trim();
+          const _lqRef=String(_lq.ref||'').toLowerCase();
+          // Check if input partially matches the question's reference
+          if(_lqRef.length>3&&(_rawLower.includes(_lqRef.split(' ')[0])||_lqRef.includes(_rawLower.split(' ')[0]))){
+            workingCtx.lastQuestion=null;
+            if(_lq.type==='confirm_street'){
+              const _ref=_lq.ref;ctx.street=_ref;ctx.town=workingCtx.townCtx||convCtx.town;
+              await handleStreetOnly(_ref,ctx);return;
+            }
+            if(_lq.type==='confirm_town'){
+              ctx.town=_lq.ref;ctx.isEV=false;mode='srch_waiting';runSearch();return;
+            }
+          }
+        }
+
+        // 1. If Harvey had an open question and user affirms → act on it
+        if(_lq&&_isAffirm&&(Date.now()-_lq.ts)<120000){
+          workingCtx.lastQuestion=null;
+          if(_lq.type==='confirm_street'||_lq.type==='confirm_continue'){
+            const _ref=_lq.ref;
+            ctx.street=_ref;ctx.town=workingCtx.townCtx||convCtx.town;
+            await handleStreetOnly(_ref,ctx);return;
+          }
+          if(_lq.type==='confirm_town'){
+            ctx.town=_lq.ref;ctx.isEV=false;mode='srch_waiting';runSearch();return;
+          }
+        }
+
+        // 2. If user denies → clear question, show options
+        if(_lq&&_isDeny){
+          workingCtx.lastQuestion=null;
+          const _denyMsg=rand([
+            `No problem, sir. What would you like instead?`,
+            `Understood, sir. Where shall we go then?`,
+            `Right — scratch that. What are we looking for?`,
+          ]);
+          harveyMsg(_denyMsg,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'},{label:'↺ FRESH START',val:'__restart__'}]);
+          speak(_denyMsg.replace(/<[^>]*>/g,'').slice(0,120));
+          loading=false;sbEl.disabled=false;return;
+        }
+
+        // 3. Build context-aware acknowledge with rich action cards
+        const _ackReply=rand(UNIVERSAL_REPLIES.acknowledge);
+        const _ackChips=[];
+        let _ackFinal=_ackReply;
+
+        if(_hasPrevCtx){
+          const _ref=_prevRef;
+          const _isSt=workingCtx.streetCtx||convCtx.street;
+          // Rich card: offer specific street chips not just text
+          // Save the question so next "yes" can act on it
+          const _ackType=_isSt?'confirm_street':'confirm_town';
+          const _ackQRef=_isSt||_ref;
+          workingCtx.lastQuestion={type:_ackType,ref:_ackQRef,ts:Date.now()};
+          const _am2=workingCtx._activeMode;
+          const _amLabel=_am2==='ev'?'your valuation':_am2==='analysis'?'the analysis':_am2==='search'?'the search':null;
+          _ackFinal+=rand([
+            ` I may be missing something, sir — what were you confirming?${_amLabel?' We were mid-'+_amLabel+' on <strong>'+String(_ref).toUpperCase()+'</strong>.':''}`,
+            ` Were you replying to something, sir? We were on <strong>${String(_ref).toUpperCase()}</strong>${_amLabel?' — '+_amLabel+' mode':''}.`,
+            ` Still have <strong>${String(_ref).toUpperCase()}</strong> loaded${_amLabel?' for '+_amLabel:''}. Is that where you want to go?`,
+          ]);
+          if(_isSt){
+            _ackChips.push(
+              {label:`▶ ${String(_isSt).replace(/^.*\s/,'').toUpperCase()} DATA`,val:_isSt},
+              {label:`⬡ ESTIMATE ${String(_isSt).replace(/^.*\s/,'').toUpperCase()}`,val:`estimate value`},
+            );
+          }
+          _ackChips.push(
+            {label:'NEW SEARCH',val:'search'},
+            {label:'NEW ESTIMATE',val:'estimate value'},
+          );
+        } else {
+          _ackFinal+=rand([
+            ` Not sure what you're confirming, sir — nothing on record. What are we after?`,
+            ` I may be missing something — no previous search on record. Shall we start one?`,
+          ]);
+          _ackChips.push(
+            {label:'RESALE TRANSACTIONS',val:'search'},
+            {label:'ESTIMATE VALUATION',val:'estimate value'},
+          );
+        }
+        const _rptCount=_checkRepeat(_ackFinal);
+        if(_rptCount>=2){
+          // Same reply 3rd time → apologise and reset
+          const _apology=rand([
+            `I suspect the conversation has drifted somewhere I haven't followed, sir. Shall we reset and you take the lead?`,
+            `I may have entirely misread what you were after, sir. No blame — let us recalibrate. Where would you like to go?`,
+            `Something tells me we are talking past each other, sir. Let me stop guessing and let you steer.`,
+            `I believe I have been answering the wrong question entirely, sir. What did you actually have in mind?`,
+          ]);
+          harveyMsg(_apology,[
+            {label:'RESALE TRANSACTIONS',val:'search'},
+            {label:'ESTIMATE VALUATION',val:'estimate value'},
+            {label:'↺ REINITIALISE',val:'__restart__'},
+            ...(_hasPrevCtx?[{label:`↗ BACK TO ${String(_prevRef).slice(0,15).toUpperCase()}`,val:'continue'}]:[]),
+          ]);
+          speak(_apology.replace(/<[^>]*>/g,'').slice(0,180));
+          workingCtx._sameReplyCount=0;workingCtx._lastReplyHash=null;
+          loading=false;sbEl.disabled=false;return;
+        }
+        harveyMsg(_ackFinal,_ackChips);
+        speak(_ackReply.replace(/<[^>]*>/g,'').slice(0,80));
+        if(mode!=='srch_waiting'&&mode!=='ev_waiting')mode='menu';
+        loading=false;sbEl.disabled=false;return;
+      }
+
       const _pool=UNIVERSAL_REPLIES[_univEmo]||UNIVERSAL_REPLIES.anticipation;
       const _reply=_pool[Math.floor(Math.random()*_pool.length)];
       let _finalReply=_reply;
-      // For joy/lol after data context — add witty redirect instead of closed loop
-      if(_univEmo==='joy'&&(convCtx.town||convCtx.street||workingCtx.streetCtx)){
-        const _joyWhere=workingCtx.streetCtx||convCtx.street||convCtx.town;
+      const _pend=convCtx._analysisPending;
+      const _pendDir=_pend?(_pend.isHighest?'highest':'lowest'):null;
+      const _pendScope=_pend?(_pend._analyseStreet||_pend._analyseTown||null):null;
+      let _uwChips=[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}];
+      if((_univEmo==='joy'||_univEmo==='surprise')&&_hasPrevCtx){
         const _joyRedir=rand([
-          ` Not sure which part you find amusing, sir — but ${String(_joyWhere).toUpperCase()} is still loaded whenever you're ready.`,
-          ` I'll take that as appreciation, sir. Shall we get back to ${String(_joyWhere).toUpperCase()}?`,
-          ` Harvey isn't entirely sure what's funny, sir — but the data for ${String(_joyWhere).toUpperCase()} is perfectly serious.`,
+          ` Not sure which part you find amusing, sir — but ${String(_prevRef).toUpperCase()} is still loaded.`,
+          ` I'll take that as appreciation, sir. Shall we get back to ${String(_prevRef).toUpperCase()}?`,
+          ` Harvey isn't entirely sure what's funny, sir — the data for ${String(_prevRef).toUpperCase()} is perfectly serious.`,
         ]);
         _finalReply=_reply+_joyRedir;
+        _uwChips=[{label:`↗ BACK TO ${String(_prevRef).slice(0,18).toUpperCase()}`,val:'continue'},..._uwChips];
+      } else if(_pend&&_pendDir&&_pendScope){
+        const _ctx=_pendScope;const _sep=_ctx?' ':'';
+        _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">Still waiting for flat type — <strong>${_pendDir}</strong> in <strong>${String(_pendScope).toUpperCase()}</strong>.</em>`;
+        _uwChips=[
+          {label:'2 ROOM',val:`${_pendDir} 2-room${_sep}${_ctx}`},
+          {label:'3 ROOM',val:`${_pendDir} 3-room${_sep}${_ctx}`},
+          {label:'4 ROOM',val:`${_pendDir} 4-room${_sep}${_ctx}`},
+          {label:'5 ROOM',val:`${_pendDir} 5-room${_sep}${_ctx}`},
+          {label:'EXECUTIVE',val:`${_pendDir} executive${_sep}${_ctx}`},
+          {label:'ALL TYPES',val:`${_pendDir} all types${_sep}${_ctx}`},
+          ...(_pend._analyseTown&&_pend._analyseStreet?[{label:`EXPAND TO ${_pend._analyseTown}`,val:`${_pendDir} all types ${_pend._analyseTown}`}]:[]),
+          {label:'CHANGE STREET',val:`__searchcard_${_pend._analyseTown||''}__`},
+        ];
       } else if(mode==='srch_waiting'){
-        _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">We were mid-search, sir — which street or area were you thinking?</em>`;
+        _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">We were mid-search, sir.</em>`;
+        _uwChips=[...(_prevRef?[{label:`↗ ${String(_prevRef).slice(0,15).toUpperCase()}`,val:'continue'}]:[]),..._uwChips];
       } else if(mode==='ev_waiting'){
-        _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">We were in the middle of your valuation, sir — shall we continue?</em>`;
+        _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">We were mid-valuation, sir.</em>`;
+        _uwChips=[{label:'CONTINUE VALUATION',val:'continue'},{label:'⚙ CHANGE DETAILS',val:'__changedetails__'},..._uwChips];
+      } else if(_hasPrevCtx){
+        _finalReply=_reply+` <em style="color:var(--t2);font-size:11px">${String(_prevRef).toUpperCase()} is still loaded, sir.</em>`;
+        _uwChips=[{label:`↗ ${String(_prevRef).slice(0,18).toUpperCase()}`,val:'continue'},..._uwChips];
       }
-      harveyMsg(_finalReply,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
+      harveyMsg(_finalReply,_uwChips);
       speak(_reply.replace(/<[^>]*>/g,'').slice(0,200));
       if(mode!=='srch_waiting'&&mode!=='ev_waiting')mode='menu';
       loading=false;sbEl.disabled=false;return;
@@ -4815,11 +5888,165 @@ async function _handleInputInner(raw){
     loading=false;sbEl.disabled=false;return;
   }
 
+  // ── UNCLEAR LOCATION — check if input might be a street area/estate name ──
+  // e.g. "dawson" → not a town → reverseStreet finds "DAWSON RD" → ask user
+  if(_intent.type===INTENT.AMBIGUOUS||_intent.type===INTENT.UNKNOWN){
+    const _rawUp=raw.toUpperCase().trim();
+    // Common English / Singlish words that are NOT location names — never probe these
+    const _PROBE_BLACKLIST=/^(data|go|lets|let|good|nice|great|home|here|back|help|work|real|type|view|more|next|show|tell|want|need|like|just|look|find|see|get|give|take|make|know|think|feel|come|done|wait|sure|ok|okay|ya|yea|yeah|yes|no|not|now|new|old|big|high|low|top|end|buy|sell|rent|own|pay|ask|say|try|use|run|set|put|keep|move|turn|open|live|love|hate|time|year|day|week|month|cost|rate|price|flat|room|unit|floor|block|area|town|city|road|street|place|land|home|house|site|plan|list|form|card|chip|part|info|news|note|text|call|chat|talk|meet|deal|case|item|kind|sort|type|way|lot|bit|cut|fix|add|key|map|mix|net|run|set|sum|top|hit|lap|log|map|mix|pay|pop|raw|tag|tax|tip|use|via|zip|data|code|link|test|work|flow|mode|task|page|file|base|lead|feed|idea|goal|role|rule|step|fact|term|view|word|line|mark|sign|note|name|date|time|size|face|hand|head|side|long|wide|tall|deep|near|far|hot|cold|warm|cool|fast|slow|hard|soft|full|half|both|each|such|same|next|last|past|soon|just|also|even|only|ever|much|many|some|more|most|less|few|all|any|own|few|per|via|vs)$/i;
+    const _isShortLocation=raw.trim().split(/\s+/).length<=3&&!parsed.town&&!parsed.street&&DB.loaded&&!_PROBE_BLACKLIST.test(raw.trim());
+    // Also require at least one word ≥5 chars (avoids "go", "da", short words)
+    const _hasSubstantialWord=_rawUp.split(/\s+/).some(w=>w.length>=5);
+    if(_isShortLocation&&_rawUp.length>=5&&_hasSubstantialWord){
+      const _locFound=reverseStreet(_rawUp);
+      if(_locFound&&_locFound.street){
+        // Found a street match — ask user to confirm
+        const _locStreet=_locFound.street;
+        const _locTown=_locFound.town||'';
+        // Get all streets for this town for dropdown
+        const _sibStreets=DB.townStreets[_locTown]||[];
+        const _streetChips=[
+          {label:`▶ ${_locStreet}`,val:_locStreet},
+          {label:`⬡ ALL OF ${_locTown}`,val:_locTown},
+          ...(_sibStreets.slice(0,4).filter(s=>s!==_locStreet).map(s=>({label:s.replace(/^.*\s(\d+[A-Z]?)$/,'$1 — '+s),val:s}))),
+          {label:'🔍 DIFFERENT AREA',val:'search'},
+        ];
+        const _locMsg=rand([
+          `I may have missed a street, sir — did you mean <strong>${_locStreet}</strong> in ${_locTown}? Or were you after the whole town?`,
+          `Quick check, sir — I found <strong>${_locStreet}</strong> in ${_locTown}. Is that the one, or shall I search the broader area?`,
+          `Were you referring to <strong>${_locStreet}</strong>, sir? I want to make sure I have the right address before pulling data.`,
+        ]);
+        workingCtx.lastQuestion={type:'confirm_street',ref:_locStreet,ts:Date.now()};
+        harveyMsg(_locMsg,_streetChips);
+        speak(_locMsg.replace(/<[^>]*>/g,'').slice(0,160));
+        mode='menu';loading=false;sbEl.disabled=false;return;
+      }
+    }
+  }
+
+  // ── GIBBERISH — catch before ambiguous handler ──
+  if(_intent.type===INTENT.UNKNOWN&&_intent.subtype==='gibberish'){
+    const _gReply=gibberishReply();
+    const _gWhere=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+    harveyMsg(_gReply,[
+      ...(_gWhere?[{label:`↗ BACK TO ${String(_gWhere).slice(0,18).toUpperCase()}`,val:'continue'}]:[]),
+      {label:'RESALE TRANSACTIONS',val:'search'},
+      {label:'ESTIMATE VALUATION',val:'estimate value'},
+    ]);
+    speak(_gReply.replace(/<[^>]*>/g,'').slice(0,160));
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── DB FACTS QUERY — answer questions about loaded data ──
+  if(/how old|how big|how large|how high|how many floor|highest floor|top floor|size|sqm|floor area|lease|age|built|year built|remaining|storey|compare.*room|room.*compare|bigger|smaller|larger|vs\.?|difference between/i.test(raw)){
+    const _fctCtx=workingCtx.streetCtx||convCtx.street||null;
+    const _fctTown=workingCtx.townCtx||convCtx.town||null;
+    const _fctBlock=workingCtx.blockCtx||convCtx.block||ctx.block||null;
+    const _hasCtx=_fctCtx||_fctTown||_fctBlock;
+
+    if(!_hasCtx){
+      // No context — ask what they're referring to
+      const _noCtxMsg=rand([
+        `Which area were you asking about, sir? I need a street, block, or town to look that up.`,
+        `Happy to check that — could you give me a street or block to narrow it down, sir?`,
+        `I can answer that, sir — which area or block did you have in mind?`,
+      ]);
+      harveyMsg(_noCtxMsg,[
+        {label:'RESALE TRANSACTIONS',val:'search'},
+        {label:'ESTIMATE VALUATION',val:'estimate value'},
+      ]);
+      speak(_noCtxMsg.replace(/<[^>]*>/g,'').slice(0,160));
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    }
+
+    if(DB.loaded){
+      // Build pool from current context
+      const cut24=evCutoff(24);
+      let _pool=DB.resale.filter(r=>r.month>=cut24);
+      if(_fctBlock&&_fctCtx) _pool=_pool.filter(r=>r.block===_fctBlock&&r.street_name===_fctCtx);
+      else if(_fctBlock&&_fctTown) _pool=_pool.filter(r=>r.block===_fctBlock&&r.town===_fctTown);
+      else if(_fctCtx) _pool=_pool.filter(r=>r.street_name===_fctCtx);
+      else if(_fctTown) _pool=_pool.filter(r=>r.town===_fctTown);
+
+      // If asking about block but block unclear — ask
+      if(/block|floor|level|storey|how high/i.test(raw)&&!_fctBlock&&_fctCtx){
+        const _blocks=[...new Set(DB.resale.filter(r=>r.street_name===_fctCtx).map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b));
+        if(_blocks.length>1){
+          const _blockChips=_blocks.slice(0,8).map(b=>({label:'BLK '+b,val:`block ${b} ${_fctCtx}`}));
+          const _blockMsg=rand([
+            `Which block did you have in mind, sir? There are ${_blocks.length} blocks on ${_fctCtx}.`,
+            `There are ${_blocks.length} blocks on ${_fctCtx}, sir — which one?`,
+            `I can check that, sir — which block on ${_fctCtx}?`,
+          ]);
+          harveyMsg(_blockMsg,[..._blockChips,{label:`ALL ON ${String(_fctCtx).slice(0,15).toUpperCase()}`,val:raw+' '+_fctCtx},{label:'CHANGE STREET',val:`__searchcard_${_fctTown||''}__`}]);
+          speak(_blockMsg.replace(/<[^>]*>/g,'').slice(0,160));
+          workingCtx.lastQuestion={type:'confirm_street',ref:_fctCtx,ts:Date.now()};
+          mode='menu';loading=false;sbEl.disabled=false;return;
+        }
+      }
+
+      const _scopeLabel=_fctBlock?`BLK ${_fctBlock} ${_fctCtx||_fctTown}`:_fctCtx||_fctTown||'this area';
+      const _facts=_dbFacts(raw,_pool);
+      if(_facts){
+        const _reply=_dbFactsReply(_facts,_scopeLabel);
+        if(_reply){
+          const _factsChips=[
+            ...(_fctCtx?[{label:'SEE TRANSACTIONS',val:_fctCtx}]:[]),
+            ...(_fctTown&&_fctCtx?[{label:`ALL OF ${String(_fctTown).slice(0,12).toUpperCase()}`,val:_fctTown}]:[]),
+            {label:'ESTIMATE VALUATION',val:'estimate value'},
+            {label:'CHANGE STREET',val:`__searchcard_${_fctTown||''}__`},
+          ];
+          harveyMsg(_reply,_factsChips);
+          speak(_reply.replace(/<[^>]*>/g,'').slice(0,200));
+          mode='menu';loading=false;sbEl.disabled=false;return;
+        }
+      }
+
+      // Facts engine returned null — ask for clarification with context
+      if(_pool.length>0){
+        const _unclearMsg=rand([
+          `Could you be a bit more specific, sir? I have data for ${_scopeLabel} — are you asking about lease age, floor area, or floor levels?`,
+          `I have ${_pool.length} records for ${_scopeLabel}, sir. What specifically would you like to know — age, size, floors, or something else?`,
+          `Happy to look that up for ${_scopeLabel}, sir — could you clarify? Lease remaining, flat size, highest floor?`,
+        ]);
+        harveyMsg(_unclearMsg,[
+          {label:'HOW OLD (LEASE)',val:`how old are the flats in ${_fctCtx||_fctTown}`},
+          {label:'HOW BIG (SIZE)',val:`how big are the flats in ${_fctCtx||_fctTown}`},
+          {label:'HIGHEST FLOOR',val:`highest floor in ${_fctCtx||_fctTown}`},
+          {label:'COMPARE TYPES',val:`compare flat types in ${_fctCtx||_fctTown}`},
+          ...(_fctCtx?[{label:'SEE ALL TRANSACTIONS',val:_fctCtx}]:[]),
+        ]);
+        speak(_unclearMsg.replace(/<[^>]*>/g,'').slice(0,180));
+        mode='menu';loading=false;sbEl.disabled=false;return;
+      }
+    }
+  }
+
   // ── AMBIGUOUS/UNKNOWN — witty handler before harveyAttempt ──
-  if(_intent.type===INTENT.AMBIGUOUS||(_intent.type===INTENT.UNKNOWN&&!/_intent.subtype==='gibberish'/.test(''))){
+  if(_intent.type===INTENT.AMBIGUOUS||(_intent.type===INTENT.UNKNOWN&&_intent.subtype!=='gibberish')){
     const _hasPrev=!!(convCtx.town||convCtx.street||workingCtx.streetCtx);
     const _prevRef=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+    // Check for repeat replies
+    const _ambRepeatCount=_checkRepeat('ambiguous-reply-'+(_hasPrevCtx?'ctx':'no-ctx'));
     let _ambReply;
+    if(_ambRepeatCount>=2){
+      // Third time hitting ambiguous — apologise
+      const _rptApology=rand([
+        `I suspect we may have drifted somewhat, sir. Allow me to reset — where would you like to go?`,
+        `I may have misread the room entirely, sir. Let us recalibrate — you call the direction.`,
+        `Something tells me we are talking past each other, sir. No fault assigned. Perhaps reinitialising will help clear the confusion, sir.`,
+        `I believe I have been answering the wrong question entirely, sir. My apologies. Perhaps a fresh start might serve us better here.`,
+      ]);
+      harveyMsg(_rptApology,[
+        ...(_hasPrevCtx?[{label:`↗ BACK TO ${String(_prevRef).slice(0,15).toUpperCase()}`,val:'continue'}]:[]),
+        {label:'RESALE TRANSACTIONS',val:'search'},
+        {label:'ESTIMATE VALUATION',val:'estimate value'},
+        {label:'↺ REINITIALISE',val:'__restart__'},
+      ]);
+      speak(_rptApology.replace(/<[^>]*>/g,'').slice(0,180));
+      workingCtx._sameReplyCount=0;workingCtx._lastReplyHash=null;
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    }
     if(/^(test|testing|test test|hello|hi|hey|yo|ping|check|is this on|anyone there|harvey\?)$/i.test(raw.trim())){
       _ambReply=rand([
         `All systems operational, sir. 52,894 transactions indexed and ready. Town, street, or block?`,
@@ -5012,17 +6239,22 @@ async function harveyAttempt(raw){
   const attemptId='ha-'+Date.now();
   const attemptDiv=document.createElement('div');attemptDiv.className='msg-ai';attemptDiv.id=attemptId;
   const shortened=raw.length>60?raw.slice(0,57)+'…':raw;
+  const _haWhere=workingCtx.streetCtx||workingCtx.townCtx||convCtx.street||convCtx.town;
+  const _haPrev=_haWhere?`<br><br><button class="stop-btn" style="color:var(--g);font-size:9px;padding:5px 14px" onclick="chipClick('${_haWhere.replace(/'/g,'')}')">↗ BACK TO ${String(_haWhere).slice(0,20).toUpperCase()}</button>`:'';
   attemptDiv.innerHTML=`<span class="mlbl" style="display:flex;align-items:center;gap:6px;justify-content:space-between">
-    <span>// HARVEY — ATTEMPTING</span>
+    <span>// HARVEY — STANDING BY</span>
     <span style="display:flex;gap:4px">
       <button class="stop-btn" onclick="stopSpeech()" title="Stop speaking">⏹ STOP</button>
       <button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3)" onclick="chipClick('__restart__')" title="Reset Harvey">↺ NEW</button>
     </span>
   </span>
   <div class="mbub">
-    <em style="color:var(--a);font-family:var(--mono);font-size:10px">Honestly, this isn't what I was built for — but I'll make an attempt. No promises, sir.</em>
-    <div style="display:flex;gap:4px;margin-top:10px">
-      <button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="document.getElementById('${attemptId}')?.remove();chipClick('__restart__')">↺ ACTUALLY, LET'S RESET</button>
+    <em style="color:var(--a);font-family:var(--mono);font-size:10px">I'm afraid that one is outside my reach, sir. I specialise in HDB resale — shall we get back to that?</em>
+    <div style="display:flex;gap:4px;margin-top:10px;flex-wrap:wrap">
+      <button class="stop-btn" style="font-size:9px;padding:5px 14px" onclick="chipClick('search')">▶ RESALE TRANSACTIONS</button>
+      <button class="stop-btn" style="font-size:9px;padding:5px 14px" onclick="chipClick('estimate value')">▶ ESTIMATE VALUATION</button>
+      <button class="stop-btn" style="color:var(--a);background:rgba(255,170,0,.08);border-color:rgba(255,170,0,.3);font-size:9px;padding:5px 14px" onclick="document.getElementById('${attemptId}')?.remove();chipClick('__restart__')">↺ REINITIALISE HARVEY</button>
+    </div>${_haPrev}
     </div>
   </div>`;
   msgsEl.appendChild(attemptDiv);bot();
@@ -5718,7 +6950,9 @@ function harveyChitChat(raw, convCtx){
   const _noDataSignal=!topicKey&&_rawTokens.length<=4&&
     !/(tampines|clementi|bedok|bishan|jurong|yishun|woodlands|sengkang|punggol|hougang|toa payoh|marine parade|bukit|geylang|serangoon|queenstown|ang mo kio|pasir ris|sembawang|central area|choa chu kang|kallang)/.test(q)&&
     !/\d{3,}|(room|resale|flat|block|floor|level|storey|street|ave|road|drive|crescent|close|lane|way|place|terrace|walk)/.test(q);
-  if(!topicKey&&_noDataSignal&&harveyChitChat._lastTopic){
+  // Only inherit _lastTopic if input is genuine continuation — not acknowledge/navigate words
+  const _isAckOrNav=/^(ok|okay|ya|yea|yeah|yep|yup|sure|noted|alright|right|fine|kk|orh|mhm|mmm|\bback\b|lets get back|back to|continue|resume|carry on|go on|proceed)$/i.test(q.trim());
+  if(!topicKey&&_noDataSignal&&harveyChitChat._lastTopic&&!_isAckOrNav){
     topicKey=harveyChitChat._lastTopic;
   }
 
@@ -9054,10 +10288,18 @@ const UNIVERSAL_WORDS = {
   amazing:  'joy',    awesome: 'joy',    brilliant:'joy',   excellent: 'joy',
   perfect:  'joy',    lovely:  'joy',    splendid:'joy',    fantastic: 'joy',
   cool:     'joy',    solid:   'joy',    steady:  'joy',    power:     'joy',
-  yes:      'joy',    ok:      'joy',    okay:    'joy',    sure:      'joy',
-  fine:     'joy',    noted:   'joy',    confirmed:'joy',   understood:'joy',
-  right:    'joy',    correct: 'joy',    exactly: 'joy',    precisely: 'joy',
-  alright:  'joy',    yep:     'joy',    yup:     'joy',    indeed:    'joy',
+  // Closed-end acknowledgements — short, final, need a brief aware reply not a pitch
+  ok:       'acknowledge', okay:    'acknowledge', ya:      'acknowledge',
+  yea:      'acknowledge', yeah:    'acknowledge', yep:     'acknowledge',
+  yup:      'acknowledge', sure:    'acknowledge', noted:   'acknowledge',
+  alright:  'acknowledge', right:   'acknowledge', mhm:     'acknowledge',
+  mmm:      'acknowledge', orh:     'acknowledge', ic:      'acknowledge',
+  kk:       'acknowledge', oks:     'acknowledge', aight:   'acknowledge',
+  ight:     'acknowledge', gotcha:  'acknowledge', roger:   'acknowledge',
+  copy:     'acknowledge', confirmed:'acknowledge',understood:'acknowledge',
+  // Positive affirmations stay as joy
+  yes:      'acknowledge', fine: 'acknowledge',    correct: 'joy',    exactly: 'joy',
+  precisely:'joy',   indeed:   'joy',    wonderful:'joy',
 
   no:         'sad',   nope:      'sad',   nah:       'sad',
   maybe:      'vulnerable', perhaps:'vulnerable', possibly:'vulnerable',
@@ -9065,6 +10307,10 @@ const UNIVERSAL_WORDS = {
   hmm:        'vulnerable', hm:    'vulnerable', huh:   'surprise',
 
   test:       'anticipation', testing:'anticipation', hello:  'anticipation',
+  go:         'anticipation', goo:    'anticipation', gooo:  'anticipation',
+  fwah:       'surprise',   wahh:   'surprise',    wah:   'surprise',
+  fuuu:       'anger',      fuu:    'anger',       fu:    'anger',
+  shiok:      'joy',        woah:   'surprise',    woahh: 'surprise',
   hi:         'anticipation', hey:    'anticipation', yo:     'anticipation',
   wow:        'surprise', whoa:   'surprise', wah:    'surprise',
   really:     'surprise', seriously:'surprise', wait:  'surprise',
@@ -9072,6 +10318,11 @@ const UNIVERSAL_WORDS = {
   omg:        'surprise', ohhh:   'surprise', ahh:   'surprise',
   eh:         'surprise', uh:     'vulnerable', oh:   'surprise',
 
+  // Presence signals
+  'still here':    'acknowledge',
+  here:            'anticipation',
+  present:         'anticipation',
+  // Tired/emotional
   tired:      'sad',    exhausted:'sad',   sleepy: 'sad',
   bored:      'disgust',lazy:     'disgust',meh:   'disgust',
   busy:       'fear',   stressed: 'fear',  rush:   'fear',
@@ -9114,7 +10365,8 @@ const UNIVERSAL_WORDS = {
   where:      'anticipation', when: 'anticipation', how: 'anticipation',
   what:       'anticipation', who:  'anticipation', why: 'surprise',
   show:       'anticipation', tell: 'anticipation', find:'anticipation',
-  search:     'anticipation', look: 'anticipation', check:'anticipation',
+  // search handled as direct chip command
+  //search:   'anticipation', look: 'anticipation', check:'anticipation',
 
   brew:       'joy',    roast:   'joy',    grind:   'joy',    steep:  'joy',
   barista:    'joy',    espresso:'joy',    latte:   'joy',    mocha:  'joy',
@@ -9175,6 +10427,16 @@ const UNIVERSAL_REPLIES = {
     `The Singapore food conversation never gets old, sir. A flat near Maxwell, Old Airport Road, or Bedok Interchange is a flat near a cultural institution. What area suits your taste?`,
     `A subject close to every Singaporean heart, sir. The good news is that proximity to excellent food is actually a measurable property criterion. What area are you considering?`,
     `Noted, sir. The kopitiam, the hawker centre, the zi char stall — these are infrastructure, not amenities. Where are we looking?`,
+  ],
+  acknowledge: [
+    `Noted, sir.`,
+    `Understood, sir.`,
+    `Right, sir.`,
+    `Duly noted, sir.`,
+    `With you, sir.`,
+    `Fair enough, sir.`,
+    `Acknowledged, sir.`,
+    `Orh, got it, sir.`,
   ],
   joy: [
     `I appreciate the positivity, sir. Shall we put that energy to work? The data is loaded and ready.`,
@@ -9856,7 +11118,7 @@ function goIdle(){
       <div style="font-family:'Share Tech Mono',monospace;font-size:8px;color:rgba(0,212,255,0.2);letter-spacing:2px;margin-top:4px">STANDBY</div>
     </div></div>
   <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:rgba(0,212,255,0.3);letter-spacing:2px;animation:idlepulse 3s ease-in-out infinite">SYSTEM IDLE</div>
-  <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:rgba(0,212,255,0.18);letter-spacing:1px">CLICK ANYWHERE · SAY "WAKE UP HARVEY"</div>
+  <div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:rgba(0,212,255,0.18);letter-spacing:1px">CLICK ANYWHERE TO CONTINUE</div>
   <style>@keyframes idlepulse{0%,100%{opacity:.25}50%{opacity:.7}}</style>`;
   d.onclick=wakeFromIdle;document.body.appendChild(d);
   setTimeout(()=>speak(rand(['Entering standby mode, sir.','Going to standby. I\'ll be here if you need me.'])),300);
@@ -9896,24 +11158,12 @@ let voiceMode=false;
 let voiceModeSilTimer=null;
 let skipPreamble=false;
 
-let clapAudioCtx=null;
-let clapAnalyser=null;
-let clapTimes=[];
-let clapAnimFrame=null;
-let clapUnlocked=false;
 
 const vmBadge=document.getElementById('voice-mode-badge');
 const vmTxt=document.getElementById('voice-mode-txt');
 const clapFlash=document.getElementById('clap-flash');
 
 
-function unlockAudioContext(){
-  if(clapUnlocked)return;
-  clapUnlocked=true;
-  startClapDetector();
-}
-document.addEventListener('touchstart',unlockAudioContext,{once:true,passive:true});
-document.addEventListener('click',unlockAudioContext,{once:true,passive:true});
 
 
 document.addEventListener('visibilitychange',()=>{
@@ -9928,6 +11178,10 @@ document.addEventListener('visibilitychange',()=>{
 
 function isDeactivationPhrase(txt){
   return /go to sleep|sleep harvey|deactivate|go offline|offline now|stop listening|voice mode off|stop voice|quiet mode|enough harvey/i.test(txt);
+}
+function isSilenceTTS(txt){
+  // Cancel Harvey's current speech but keep voice mode on
+  return /^stop$|^ok stop$|^stop it$|^shut up$|^enough$|^ok enough$|^pause$|^stop talking$|^be quiet$|^quiet$|^shhh?$/i.test(txt.trim());
 }
 function isSkipPhrase(txt){
   return /skip|go straight|cut to|just tell me|get to the point|straight to|no need intro|skip all these|just show me|direct answer|just the data|results only/i.test(txt);
@@ -9959,13 +11213,20 @@ function activateVoiceMode(){
   setTimeout(()=>safeStart(),600);
 }
 
-function deactivateVoiceMode(){
+function deactivateVoiceMode(silent){
   voiceMode=false;
-  vmBadge.classList.remove('active');
-  vsBar.classList.remove('voice-active');
-  vsBar.style.display='none';
+  if(vmBadge)vmBadge.classList.remove('active');
+  if(vsBar){vsBar.classList.remove('voice-active');vsBar.style.display='none';}
+  if(!silent){
+    const _sleepMsg=rand([
+      'Voice recognition deactivated, sir. Always here for the next mission — ready when you are.',
+      'Going quiet, sir. I remain on standby. Wake me whenever you need.',
+      'Listening mode off, sir. The data stays loaded. Just say the word when you\'re back.',
+    ]);
+    harveyMsg(_sleepMsg);speak(_sleepMsg);
+  }
   clearTimeout(voiceModeSilTimer);
-  micState='wake';
+  micState='off';
   try{recog?.abort();}catch(e){}
   recogBusy=false;
   setTimeout(()=>safeStart(),600);
@@ -9978,160 +11239,417 @@ function deactivateVoiceMode(){
 }
 
 
-function startClapDetector(){
-  const AC=window.AudioContext||window.webkitAudioContext;
-  if(!AC||!navigator.mediaDevices?.getUserMedia)return;
-  navigator.mediaDevices.getUserMedia({
-    audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},
-    video:false
-  }).then(stream=>{
-    clapAudioCtx=new AC();
-    const src=clapAudioCtx.createMediaStreamSource(stream);
-    clapAnalyser=clapAudioCtx.createAnalyser();
-    clapAnalyser.fftSize=512;
-    src.connect(clapAnalyser);
-    const buf=new Uint8Array(clapAnalyser.fftSize);
-    let lastClapTime=0;
-    let inClap=false;
-    const CLAP_THRESHOLD=IS_MOBILE_DEVICE?140:160; // Lowered — 210 was too high for most mics
-    const CLAP_WINDOW=900;
+// ══ VOICE DEBUG FUNCTIONS ══
+function vdbgLog(msg,color){
+  const el=document.getElementById('vdbg-log');
+  if(!el)return;
+  const ts=new Date().toLocaleTimeString('en-SG',{hour12:false});
+  const row=document.createElement('div');
+  row.style.color=color||'#aaa';
+  row.style.marginBottom='2px';
+  row.textContent=`[${ts}] ${msg}`;
+  el.appendChild(row);
+  el.scrollTop=el.scrollHeight;
+  // Keep max 50 entries
+  while(el.children.length>50)el.removeChild(el.firstChild);
+}
 
-    vsSup.textContent='MIC ACTIVE — DOUBLE-CLAP TO ACTIVATE VOICE MODE';
-    vsSup.style.color='var(--g)';
-
-    function tick(){
-      clapAnimFrame=requestAnimationFrame(tick);
-      if(voiceMode||document.visibilityState!=='visible')return;
-      clapAnalyser.getByteTimeDomainData(buf);
-      let peak=0;
-      for(let i=0;i<buf.length;i++){const v=Math.abs(buf[i]-128);if(v>peak)peak=v;}
-
-      const pct=Math.min(100,Math.round(peak/128*100));
-      if(peak>20){ // any sound above background noise
-        vsSup.textContent=`MIC LEVEL: ${'█'.repeat(Math.ceil(pct/10))}${'░'.repeat(10-Math.ceil(pct/10))} ${peak>CLAP_THRESHOLD?'⚡ CLAP!':''}`;
+function _startVdbgLive(){
+  clearInterval(window._vdbgLive);
+  window._vdbgLive=setInterval(()=>{
+    const p=document.getElementById('vdbg');
+    if(!p||p.style.display==='none'){clearInterval(window._vdbgLive);return;}
+    const b=document.getElementById('vdbg-buf-val');
+    const t=document.getElementById('vdbg-timer-val');
+    const rv=document.getElementById('vdbg-restart-val');
+    const hdb=document.getElementById('vdbg-harvey-db');
+    if(b)b.textContent=_srBuffer||'(empty)';
+    if(t)t.textContent=speechTimer?'RUNNING 3s':'idle';
+    if(rv)rv.textContent=window._srRestarts||0;
+    if(hdb)hdb.textContent=_harveyAmbientDb===-999?'--':Math.round(_harveyAmbientDb)+'dB';
+  },300);
+}
+function initVoiceDebug(){
+  const srVal=document.getElementById('vdbg-sr-val');
+  const langVal=document.getElementById('vdbg-lang-val');
+  const micVal=document.getElementById('vdbg-mic-val');
+  const stateVal=document.getElementById('vdbg-state-val');
+  
+  if(srVal)srVal.textContent=SR?'✓ SUPPORTED':'✗ NOT SUPPORTED';
+  if(srVal)srVal.style.color=SR?'var(--g)':'var(--r)';
+  const IS_IOS_D=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if(langVal)langVal.textContent=IS_IOS_D?'en-US':'en-SG';
+  if(stateVal)stateVal.textContent=micState;
+  
+  // Check mic permission
+  if(navigator.permissions){
+    navigator.permissions.query({name:'microphone'}).then(result=>{
+      if(micVal){
+        micVal.textContent=result.state.toUpperCase();
+        micVal.style.color=result.state==='granted'?'var(--g)':result.state==='denied'?'var(--r)':'var(--a)';
       }
-      const now=Date.now();
-      if(peak>CLAP_THRESHOLD&&!inClap){
-        inClap=true;
-        clapFlash.classList.add('show');
-        setTimeout(()=>clapFlash.classList.remove('show'),120);
-        const gap=now-lastClapTime;
-        if(gap>80&&gap<CLAP_WINDOW){
-          clapTimes=[];lastClapTime=0;
-          activateVoiceMode();
-        }else{lastClapTime=now;}
-        setTimeout(()=>{inClap=false;},120);
-      }
+      vdbgLog('Mic permission: '+result.state, result.state==='granted'?'var(--g)':'var(--r)');
+    }).catch(()=>{if(micVal)micVal.textContent='API not available';});
+  }
+  vdbgLog('Debug initialised. SR='+!!SR+' iOS='+IS_IOS_D,'var(--g)');
+}
+
+function testMicAccess(){
+  vdbgLog('Testing mic access…','var(--a)');
+  const micVal=document.getElementById('vdbg-mic-val');
+  navigator.mediaDevices?.getUserMedia({audio:true,video:false})
+    .then(stream=>{
+      if(micVal){micVal.textContent='GRANTED ✓';micVal.style.color='var(--g)';}
+      vdbgLog('Mic access granted ✓','var(--g)');
+      stream.getTracks().forEach(t=>t.stop());
+
+    })
+    .catch(err=>{
+      if(micVal){micVal.textContent='DENIED ✗';micVal.style.color='var(--r)';}
+      vdbgLog('Mic access DENIED: '+err.message,'var(--r)');
+    });
+}
+
+function testSpeechRecog(){
+  vdbgLog('Testing speech recognition…','var(--a)');
+  if(!SR){vdbgLog('SR not supported on this browser','var(--r)');return;}
+  const testR=new SR();
+  const IS_IOS_T=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  try{testR.lang=IS_IOS_T?'en-US':'en-SG';}catch(e){testR.lang='en-US';}
+  testR.continuous=false;testR.interimResults=true;testR.maxAlternatives=3;
+  const heardEl=document.getElementById('vdbg-heard');
+  testR.onstart=()=>vdbgLog('Recognition started — speak now','var(--g)');
+  testR.onresult=e=>{
+    let t='';
+    for(let i=0;i<e.results.length;i++){
+      t+=(e.results[i].isFinal?'[FINAL] ':'[interim] ')+Array.from({length:e.results[i].length},(_,j)=>e.results[i][j].transcript).join(' | ');
     }
-    tick();
-  }).catch(()=>{});
+    if(heardEl)heardEl.textContent=t;
+    vdbgLog('Heard: '+t,'#fff');
+  };
+  testR.onerror=e=>{vdbgLog('SR Error: '+e.error,'var(--r)');};
+  testR.onend=()=>vdbgLog('Recognition ended','var(--a)');
+  try{testR.start();}catch(e){vdbgLog('Start failed: '+e.message,'var(--r)');}
+}
+
+async function loadWhisper(onProg){
+  if(_wReady)return _wPipeline;
+  if(_wLoading)return new Promise(r=>_wCBs.push(r));
+  _wLoading=true;
+  try{
+    const mod=await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+    const pipeline=mod.pipeline,env=mod.env;
+    env.allowLocalModels=false;env.useBrowserCache=true;
+    _wPipeline=await pipeline('automatic-speech-recognition','Xenova/whisper-tiny.en',{progress_callback:onProg});
+    _wReady=true;_wLoading=false;
+    _wCBs.forEach(cb=>cb(_wPipeline));_wCBs=[];
+    return _wPipeline;
+  }catch(e){_wLoading=false;throw e;}
+}
+async function transcribeAudio(blob){
+  const ab=await blob.arrayBuffer();
+  const ac=new(window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+  const decoded=await ac.decodeAudioData(ab);
+  const f32=decoded.getChannelData(0);ac.close();
+  const r=await _wPipeline(f32,{
+    language:'english',task:'transcribe',return_timestamps:false,
+    initial_prompt:'HDB resale Clementi Tampines Bedok Punggol Sengkang Woodlands Jurong Yishun Bishan Hougang Serangoon Pasir Ris Queenstown Ang Mo Kio Toa Payoh Bukit Batok Teban four room five room three room executive block floor storey'
+  });
+  return r.text.trim();
+}
+async function initWhisperMode(){
+  if(_whisperInitDone)return;
+  if(vsTxt)vsTxt.textContent='LOADING WHISPER... (first time ~30s)';
+  const onProg=p=>{
+    if(p.status==='downloading'){
+      const pct=p.progress?Math.round(p.progress)+'%':'...';
+      if(vsTxt)vsTxt.textContent='DOWNLOADING WHISPER '+pct;
+    }
+  };
+  try{
+    await loadWhisper(onProg);
+    _whisperInitDone=true;_whisperMode=true;
+    if(vsTxt)vsTxt.textContent='WHISPER READY -- HOLD MIC TO SPEAK';
+    try{recog?.abort();}catch(e){}recogBusy=false;micState='off';
+    harveyMsg(rand([
+      'Whisper engine loaded, sir. Hold the mic button and speak -- release when done.',
+      'Voice engine upgraded, sir. Press and hold the microphone to speak.',
+      'Whisper ready, sir. Hold mic to talk, release to send.',
+    ]));
+    speak('Whisper ready, sir. Hold the microphone to speak.');
+  }catch(e){
+    _whisperMode=false;micState='query';safeStart();
+  }
+}
+async function startPTBRecording(){
+  if(!_wReady)return;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    _audioChunks=[];
+    const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/mp4';
+    _mediaRecorder=new MediaRecorder(stream,{mimeType:mime});
+
+
+    _mediaRecorder.ondataavailable=e=>{
+      if(e.data.size<1) return;
+            _audioChunks.push(e.data);
+    };
+    _mediaRecorder.start(100);_ptbHeld=true;
+    if(vsTxt)vsTxt.textContent='REC -- RELEASE TO SEND';
+    mbEl?.classList.add('active');
+  }catch(e){console.warn('PTT mic error:',e);}
+}
+async function stopPTBRecording(){
+  if(!_mediaRecorder||!_ptbHeld)return;
+  _ptbHeld=false;
+  if(vsTxt)vsTxt.textContent='WHISPER PROCESSING...';
+  mbEl?.classList.remove('active');
+  return new Promise(resolve=>{
+    _mediaRecorder.onstop=async()=>{
+      try{
+        const blob=new Blob(_audioChunks,{type:_mediaRecorder.mimeType||'audio/webm'});
+        _audioChunks=[];_mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+        const text=await transcribeAudio(blob);
+        if(text&&text.length>1){
+          const norm=normaliseVoiceInput(text);
+          // Check for stop command before sending to Harvey
+          if(isSilenceTTS(norm)){
+            stopSpeech();
+            if(vsTxt)vsTxt.textContent='WHISPER READY -- HOLD MIC TO SPEAK';
+          } else if(isDeactivationPhrase(norm)){
+            deactivateVoiceMode(false);
+          } else {
+            ciEl.value=normalizeSpeech(norm);
+            if(vsTxt)vsTxt.textContent='> '+norm;
+            handleInput();
+          }
+        }else{
+          if(vsTxt)vsTxt.textContent='WHISPER READY -- HOLD MIC TO SPEAK';
+        }
+      }catch(e){if(vsTxt)vsTxt.textContent='Error -- try again';}
+      resolve();
+    };
+    _mediaRecorder.stop();
+  });
 }
 
 
 function normaliseVoiceInput(txt){
   let s=txt.trim();
-  s=s.replace(/^(uh+|um+|err+|ah+|eh+|can you|please|harvey|can harvey|hey harvey|ok harvey|yo harvey)\s+/gi,'');
-  s=s.replace(/\bwant to (check|see|find|look)\b/gi,'show me');
-  s=s.replace(/\bcan (check|see|find|look)\b/gi,'show me');
+
+  // ── Strip filler and preambles ──
+  s=s.replace(/^(uh+|um+|err+|ah+|eh+|erm+|aiyah|aiya|wah|walao|wah lao|ok so|so ah|then ah|then|like that|can you|please|harvey|can harvey|hey harvey|ok harvey|yo harvey|oi harvey|eh harvey)\s+/gi,'');
+
+  // ── Singlish / colloquial → standard ──
+  s=s.replace(/\bwant to (check|see|find|look|know)\b/gi,'show me');
+  s=s.replace(/\bcan (check|see|find|look|know|tell)\b/gi,'show me');
   s=s.replace(/\bwhere got\b/gi,'are there any');
-  s=s.replace(/\bhow much (is|for|the)\b/gi,'what is the price of');
   s=s.replace(/\bgot (any|more)?\s*/gi,'');
+  s=s.replace(/\blow how\b/gi,'lowest');
+  s=s.replace(/\bhow low\b/gi,'lowest');
+  s=s.replace(/\bhigh how\b/gi,'highest');
+  s=s.replace(/\bhow high\b/gi,'highest');
+  s=s.replace(/\bmost cheap\b/gi,'cheapest');
+  s=s.replace(/\bcheap cheap\b/gi,'cheapest');
+  s=s.replace(/\bwhat price\b/gi,'what is the price');
+  s=s.replace(/\bhow much (is|for|the|this|that)?\s*/gi,'price of ');
+  s=s.replace(/\bhow expensive\b/gi,'what is the price');
+  s=s.replace(/\blike that means\b/gi,'that means');
+  s=s.replace(/\bcan lah\b/gi,'yes');
+  s=s.replace(/\bcannot lah\b/gi,'no');
+  s=s.replace(/\bsay again\b/gi,'repeat');
+  s=s.replace(/\btoo fast lah\b/gi,'repeat');
+  s=s.replace(/\bwhat is this\b/gi,'explain this');
+  s=s.replace(/\bdon't understand\b/gi,'explain this');
+  s=s.replace(/\bshowing me\b/gi,'show me');
+  s=s.replace(/\brent or buy\b/gi,'resale');
+
+  // ── Field label normalisations ──
   s=s.replace(/\bblock number\b/gi,'block');
   s=s.replace(/\bunit level\b/gi,'floor');
   s=s.replace(/\bwhich level\b/gi,'floor');
   s=s.replace(/\bfloor number\b/gi,'floor');
+  s=s.replace(/\blevel (\d+)\b/gi,'floor $1');
+  s=s.replace(/\bstorey (\d+)\b/gi,'floor $1');
+  s=s.replace(/\b(three|four|five|two|one)[ -]room\b/gi,(m,n)=>{
+    const map={one:'1',two:'2',three:'3',four:'4',five:'5'};
+    return (map[n.toLowerCase()]||n)+' room';
+  });
+  s=s.replace(/\bexec\b/gi,'executive');
+  s=s.replace(/\bexco\b/gi,'executive');   // common mishear
+  s=s.replace(/\bHDB\b/g,'');               // redundant
+
+  // ── Singapore mispronunciations → correct spellings ──
+  // Street/area names commonly mispronounced or misheard in SG accent
+  s=s.replace(/\bteaban\b/gi,'teban');
+  s=s.replace(/\btiban\b/gi,'teban');
+  s=s.replace(/\btee ban\b/gi,'teban');
+  s=s.replace(/\bcleminty\b/gi,'clementi');
+  s=s.replace(/\bclementy\b/gi,'clementi');
+  s=s.replace(/\bklimenti\b/gi,'clementi');
+  s=s.replace(/\bsengkang\b/gi,'sengkang');  // correct already but ensure
+  s=s.replace(/\bseng kang\b/gi,'sengkang');
+  s=s.replace(/\bpunggol\b/gi,'punggol');
+  s=s.replace(/\bpungol\b/gi,'punggol');
+  s=s.replace(/\bpunggal\b/gi,'punggol');
+  s=s.replace(/\byishun\b/gi,'yishun');
+  s=s.replace(/\byeeshun\b/gi,'yishun');
+  s=s.replace(/\bjurong\b/gi,'jurong');
+  s=s.replace(/\bjurung\b/gi,'jurong');
+  s=s.replace(/\bchoa chu kang\b/gi,'choa chu kang');
+  s=s.replace(/\bchua chu kang\b/gi,'choa chu kang');
+  s=s.replace(/\bcck\b/gi,'choa chu kang');
+  s=s.replace(/\bangmo kio\b/gi,'ang mo kio');
+  s=s.replace(/\bang mo kio\b/gi,'ang mo kio');
+  s=s.replace(/\bamk\b/gi,'ang mo kio');
+  s=s.replace(/\btoa payoh\b/gi,'toa payoh');
+  s=s.replace(/\btoa pay oh\b/gi,'toa payoh');
+  s=s.replace(/\bbishan\b/gi,'bishan');
+  s=s.replace(/\bbeeshun\b/gi,'bishan');
+  s=s.replace(/\bbedock\b/gi,'bedok');
+  s=s.replace(/\bbee dock\b/gi,'bedok');
+  s=s.replace(/\bqueenstown\b/gi,'queenstown');
+  s=s.replace(/\bqueen's town\b/gi,'queenstown');
+  s=s.replace(/\bkallang\b/gi,'kallang');
+  s=s.replace(/\bkaling\b/gi,'kallang');
+  s=s.replace(/\bwoodland\b/gi,'woodlands');   // missing s
+  s=s.replace(/\btampines\b/gi,'tampines');
+  s=s.replace(/\btampinis\b/gi,'tampines');
+  s=s.replace(/\btamping\b/gi,'tampines');
+  s=s.replace(/\bpasir ris\b/gi,'pasir ris');
+  s=s.replace(/\bpasir rice\b/gi,'pasir ris');  // common mishear
+  s=s.replace(/\bserangoon\b/gi,'serangoon');
+  s=s.replace(/\bseragon\b/gi,'serangoon');
+
+  // ── Street type mishears ──
+  s=s.replace(/\bgardens road\b/gi,'gardens road');
+  s=s.replace(/\bgarden road\b/gi,'gardens road');
+  s=s.replace(/\bstreet one\b/gi,'street 1');
+  s=s.replace(/\bstreet two\b/gi,'street 2');
+  s=s.replace(/\bstreet three\b/gi,'street 3');
+  s=s.replace(/\bavenue one\b/gi,'avenue 1');
+  s=s.replace(/\bavenue two\b/gi,'avenue 2');
+  s=s.replace(/\bblk\b/gi,'block');
+
+  // ── Wake/sleep commands — must match exactly so don't over-normalise ──
+  // These are handled before normalise runs so leave them
+
   return s.trim();
 }
 
 function buildRecog(){
   if(!SR)return null;
   const r=new SR();
-  r.continuous=false;
+  r.continuous=false; // fires isFinal reliably on all platforms
   r.interimResults=true;
   try{r.lang=IS_IOS?'en-US':'en-SG';}catch(e){r.lang='en-US';}
-  r.maxAlternatives=3; // More alternatives = better chance of correct match
+  r.maxAlternatives=3;
 
   r.onstart=()=>{
     recogBusy=true;
+    window._srRestarts=(window._srRestarts||0)+1;
+    vdbgLog('SR #'+window._srRestarts+' buf:['+_srBuffer.slice(0,20)+']','var(--g)');
+    const stEl=document.getElementById('vdbg-state-val');
+    if(stEl)stEl.textContent=micState+' #'+window._srRestarts;
     if(micState==='query'){
       mbEl.classList.add('active');
       vsBar.style.display='flex';
-      vsTxt.textContent=voiceMode?'HARVEY LISTENING \u2014 SPEAK ANYTIME':'HARVEY LISTENING\u2026';
+      if(!_srBuffer)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
     }
   };
 
   r.onresult=e=>{
     let interim='',final='';
     for(let i=e.resultIndex;i<e.results.length;i++){
-      if(e.results[i].isFinal)final+=e.results[i][0].transcript;
+      if(e.results[i].isFinal) final+=e.results[i][0].transcript+' ';
       else interim+=e.results[i][0].transcript;
     }
-    const heard=(final||interim).trim();
-    if(!heard)return;
+    if(!final&&!interim)return;
+    if(micState!=='query')return;
 
-    if(micState==='wake'&&!voiceMode){
-      if(/wake.?up.?harvey|hey.?harvey|ok.?harvey|harvey.?wake|harvey.?up/i.test(heard)){
-        if(isIdle){wakeFromIdle();}
-        else{
-          const rep=rand(['Yes, sir. Go ahead.','At your service, sir.','Listening, sir.','Harvey online. What do you need?','Right here, sir. What can I do for you?']);
-          harveyMsg(rep,[{label:'RESALE TRANSACTIONS',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
-          speak(rep);mode='menu';
-          setTimeout(()=>{micState='query';safeStart();},1200);
+    // Show interim live in input box (not buffered -- just preview)
+    if(interim&&!final){
+      const preview=(_srBuffer+(interim?' '+interim:'')).trim();
+      ciEl.value=preview;
+      ciEl.style.height='auto';
+      ciEl.style.height=Math.min(ciEl.scrollHeight,120)+'px';
+      vsTxt.textContent='> '+preview.slice(-60)+' -- listening...';
+      vsBar.style.color='var(--g)';
+      showLiveBubble(preview);
+      return; // Don't touch timer on interim -- wait for final
+    }
+
+    // final arrived -- append to module-level buffer permanently
+    if(final){
+      _srBuffer=(_srBuffer+' '+final).trim();
+      const heardEl=document.getElementById('vdbg-heard');
+      if(heardEl)heardEl.textContent=_srBuffer;
+      vdbgLog('FINAL:['+final.trim()+'] BUF:['+_srBuffer+']','#fff');
+
+      // Show full buffer
+      ciEl.value=_srBuffer;
+      ciEl.style.height='auto';
+      ciEl.style.height=Math.min(ciEl.scrollHeight,120)+'px';
+      vsTxt.textContent='> '+_srBuffer.slice(-60)+' -- still listening...';
+      vsBar.style.color='var(--g)';
+      showLiveBubble(_srBuffer);
+
+      const _raw=normaliseVoiceInput(final.trim());
+
+      // Self-filter: only when Harvey actively speaking AND first word matches
+      if(_speakBusy&&_harveyCurrentSpeech&&_harveyCurrentSpeech.length>3){
+        const _firstWord=_harveyCurrentSpeech.split(' ')[0];
+        if(_firstWord.length>3&&_raw.toLowerCase().startsWith(_firstWord)){
+          vdbgLog('Self-filtered: '+_raw.slice(0,20),'#555');
+          _srBuffer=_srBuffer.slice(0,Math.max(0,_srBuffer.length-final.trim().length)).trim();
+          return;
         }
-        resetIdle();
       }
-      if(/voice mode|always listen|hands free|keep listening|continuous mode|always on/i.test(heard)){
-        activateVoiceMode();
+
+      // Cancel Harvey if user speaks over him
+      if(_speakBusy&&final.trim().split(' ').length>1){
+        window.speechSynthesis.cancel();
+        _speakQueue=[];_speakBusy=false;_harveyCurrentSpeech='';
+        stopEnergyPoll();
+        vdbgLog('User interrupted Harvey','var(--a)');
+        if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';
       }
-    } else if(micState==='query'){
-      if(interim){
-        ciEl.value=interim;
-        ciEl.style.height='auto';
-        ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';
-        vsTxt.textContent='🎙 '+interim;
-        vsBar.style.color='var(--g)';
-        showLiveBubble(interim);
-        clearTimeout(speechTimer);clearTimeout(voiceModeSilTimer);
-        const silenceMs=voiceMode?2500:IS_MOBILE_DEVICE?3000:4000;
-        speechTimer=setTimeout(()=>{
-          if(ciEl.value.trim()){
-            removeLiveBubble();
-            const raw=normaliseVoiceInput(ciEl.value);
-            const normalised=normalizeSpeech(raw);
-            ciEl.value=normalised;
-            ciEl.style.height='auto';
-            ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';
-            handleInput();
-          }
-        },silenceMs);
-      }
-      if(final){
-        clearTimeout(speechTimer);clearTimeout(voiceModeSilTimer);
-        removeLiveBubble();
-        let raw=normaliseVoiceInput(final);
-        if(isDeactivationPhrase(raw)){deactivateVoiceMode();return;}
-        if(isSkipPhrase(raw)){
+
+      // System commands
+      if(!_speakBusy){
+        if(isSilenceTTS(_raw)){stopSpeech();_srBuffer='';if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';return;}
+        if(isDeactivationPhrase(_raw)){deactivateVoiceMode(false);return;}
+        if(isSkipPhrase(_raw)){
           skipPreamble=true;
-          raw=raw.replace(/skip|just tell me|get to the point|no need intro|skip all these|just show me|direct answer|just the data|results only/gi,'').trim();
-          if(!raw){harveyMsg('Understood, sir — brevity mode. Ask away.');speak('Understood, sir. Brevity mode. Ask away.');if(voiceMode)setTimeout(()=>safeStart(),800);return;}
+          const stripped=_raw.replace(/skip|just tell me|get to the point|no need intro|skip all these|just show me|direct answer|just the data|results only/gi,'').trim();
+          if(!stripped){harveyMsg('Understood, sir -- brevity mode. Ask away.');speak('Understood, sir. Ask away.');if(voiceMode)setTimeout(()=>safeStart(),800);_srBuffer='';return;}
         }
+      }
+
+      // Reset 3s timer on every final -- sends full _srBuffer after 3s silence
+      clearTimeout(speechTimer);
+      speechTimer=setTimeout(()=>{
+        const toSend=(_srBuffer||ciEl.value).trim();
+        _srBuffer='';speechTimer=null;window._srRestarts=0;
+        if(!toSend){vdbgLog('3s -- nothing','#555');return;}
+        removeLiveBubble();
+        const raw=normaliseVoiceInput(toSend);
         const normalised=normalizeSpeech(raw);
         ciEl.value=normalised;
         ciEl.style.height='auto';
         ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';
-        vsTxt.textContent='✓ HEARD: '+normalised;
-        vsTxt.style.color='var(--c)';
-        setTimeout(()=>{vsTxt.style.color='';},2000);
-        const delay=voiceMode?800:IS_MOBILE_DEVICE?1200:1500;
-        speechTimer=setTimeout(()=>handleInput(),delay);
-      }
+        vsTxt.textContent='Sending: '+normalised.slice(0,50);
+        vdbgLog('>>> SEND: ['+normalised+']','var(--c)');
+        handleInput();
+      },3000);
     }
   };
 
   r.onerror=e=>{
-    recogBusy=false;clearTimeout(speechTimer);
+    recogBusy=false;
+    vdbgLog('ERROR:'+e.error,'var(--r)');
     if(e.error==='not-allowed'||e.error==='service-not-allowed'){
-      vsSup.textContent='MIC BLOCKED \u2014 allow mic access in browser settings';
+      vsSup.textContent='MIC BLOCKED -- allow mic access in settings';
       vsSup.style.color='var(--r)';
       voiceMode=false;vmBadge.classList.remove('active');micState='off';return;
     }
@@ -10142,26 +11660,12 @@ function buildRecog(){
     recogBusy=false;
     mbEl.classList.remove('active');
     if(!voiceMode)vsBar.style.display='none';
-
-    if(micState==='wake'&&!voiceMode){
-      setTimeout(()=>safeStart(),IS_IOS?600:300);
-    } else if(micState==='query'){
-      if(!speechTimer){
-        if(voiceMode){
-          vsTxt.textContent='HARVEY LISTENING — SPEAK ANYTIME';
-          setTimeout(()=>safeStart(),IS_IOS?700:250);
-        } else {
-          micState='wake';
-          setTimeout(()=>safeStart(),300);
-        }
-      } else {
-        const t=speechTimer;
-        speechTimer=setTimeout(()=>{
-          if(t===speechTimer&&ciEl.value.trim())handleInput();
-          if(voiceMode)setTimeout(()=>safeStart(),500);
-          else{micState='wake';setTimeout(()=>safeStart(),500);}
-        },voiceMode?500:1200);
-      }
+    vdbgLog('END buf:['+_srBuffer.slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
+    if(micState==='query'){
+      // Restart immediately to catch next utterance
+      // Buffer preserved at module level -- nothing lost
+      const delay=IS_IOS?450:150;
+      setTimeout(()=>{ if(micState==='query'&&!recogBusy)safeStart(); },delay);
     }
   };
   return r;
@@ -10170,17 +11674,21 @@ function buildRecog(){
 function safeStart(){
   if(micState==='off'||!SR)return;
   if(recogBusy){
-    setTimeout(()=>{
-      if(recogBusy){recogBusy=false;safeStart();}
-    },2000);
+    setTimeout(()=>{if(recogBusy){recogBusy=false;safeStart();}},2000);
     return;
   }
   recog=buildRecog();
   try{
     recog.start();
-    if(micState==='wake'){
-      vsTxt.textContent='SAY "WAKE UP HARVEY"';
-      vsBar.style.display='flex';
+    // Attach Silero VAD on first start -- loads model lazily
+    if(!_sileroStream&&micState==='query'){
+      navigator.mediaDevices?.getUserMedia({
+        audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}
+      }).then(async stream=>{
+        const loaded=await loadSileroVAD();
+        if(loaded) startSileroOnStream(stream);
+        else stream.getTracks().forEach(t=>t.stop());
+      }).catch(()=>{});
     }
   }catch(e){
     recogBusy=false;
@@ -10189,20 +11697,30 @@ function safeStart(){
 }
 
 function toggleMic(){
+  if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
   if(!SR){harveyMsg('Voice input is not supported on this browser, sir. Please try Chrome on Android or Safari on iOS 14.5 or later.');return;}
   if(voiceMode){deactivateVoiceMode();return;}
   if(micState==='query'){
-    clearTimeout(speechTimer);speechTimer=null;
-    micState='wake';
+    // Second click — stop listening
+    clearTimeout(speechTimer);clearTimeout(voiceModeSilTimer);speechTimer=null;
+    _srBuffer='';
+    micState='off';
     try{recog?.abort();}catch(e){}
     recogBusy=false;
     mbEl.classList.remove('active');
     vsBar.style.display='none';
+    removeLiveBubble();
   }else{
+    // First click — start listening, same behaviour as voice mode
+    _openEnergyMonitor();
     micState='query';
     try{recog?.abort();}catch(e){}
     recogBusy=false;
+    _srBuffer='';
     clearTimeout(speechTimer);
+    mbEl.classList.add('active');
+    vsBar.style.display='flex';
+    vsTxt.textContent='HARVEY LISTENING — SPEAK ANYTIME';
     setTimeout(()=>safeStart(),300);
   }
 }
@@ -10222,9 +11740,7 @@ setInterval(()=>{
 },400);
 
 if(SR){
-  const hint=IS_MOBILE_DEVICE
-    ?'DOUBLE-CLAP OR PRESS 🎤 TO ACTIVATE VOICE'
-    :'SAY "WAKE UP HARVEY" · DOUBLE-CLAP · OR CLICK 🎤';
+  const hint=voiceMode?'VOICE MODE ACTIVE · SAY GO TO SLEEP TO EXIT':'CLICK MIC TO ACTIVATE';
   vsSup.textContent=hint;
   vsSup.style.color='var(--g)';
   micState='wake';
@@ -10237,6 +11753,10 @@ if(SR){
 
 function normalizeSpeech(txt){
   let s=txt.trim();
+
+  // Collapse repeated characters: "gooooo"→"goo", "wahhhh"→"wahh", "fuuuuu"→"fuu"
+  // Preserves 2 max so "cool"→"cool" stays, "gooooo"→"goo" (base word detectable)
+  s=s.replace(/([a-zA-Z])\1{2,}/g,(m,c)=>c+c); // 3+ repeats → 2
 
   s=s.replace(/\bjurong\s*east\b/gi,'jurong east');
   s=s.replace(/\bjurong\s*west\b/gi,'jurong west');
@@ -10392,6 +11912,22 @@ window.addEventListener('load',async()=>{
     msgsEl.appendChild(boot);bot();
     speak('Harvey is at your service. All systems online.');
   },400);
+
+  // ── Load Whisper + data in parallel ──
+  // Whisper starts downloading in background immediately — no waiting
+  let _whisperPreload=null;
+  if(!_wReady && !_wLoading){
+    _whisperPreload=loadWhisper(p=>{
+      if(p.status==='downloading'){
+        const pct=p.progress?Math.round(p.progress)+'%':'...';
+        vdbgLog('Whisper preload: '+pct,'var(--a)');
+      }
+    }).then(()=>{
+      vdbgLog('Whisper preloaded and cached','var(--g)');
+    }).catch(e=>{
+      vdbgLog('Whisper preload failed (will retry on activation): '+e.message,'var(--r)');
+    });
+  }
 
   const ok=await loadData();
 
