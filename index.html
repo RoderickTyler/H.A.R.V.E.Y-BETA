@@ -657,11 +657,9 @@ if(window.speechSynthesis.onvoiceschanged!==undefined)
 
 let _speakQueue=[];let _speakBusy=false;
 let _harveyCurrentSpeech='';
+let _srPausedForTTS=false; // SR aborted while Harvey speaks -- restarts on onend
+let _energyMonOpening=false; // prevents duplicate getUserMedia calls
 let _srBuffer=''; // module-level -- survives every buildRecog() restart
-// Silero VAD state
-let _sileroReady=false,_sileroSession=null,_sileroStream=null;
-let _sileroAC=null,_sileroProc=null,_sileroSpeaking=false;
-let _sileroH=new Float32Array(2*64),_sileroC=new Float32Array(2*64); // LSTM state
 let _harveyAmbientDb=-999;   // Harvey's speaker level as heard by mic (set during first TTS)
 let _energyMonAC=null;       // AudioContext for energy monitoring
 let _energyMonStream=null;   // mic stream for energy monitor
@@ -685,7 +683,8 @@ function _rmsDb(buf){
 // Open a persistent mic stream for energy monitoring
 // Called once on first safeStart or toggleMic
 function _openEnergyMonitor(){
-  if(_energyMonReady||_energyMonStream) return;
+  if(_energyMonReady||_energyMonStream||_energyMonOpening) return;
+  _energyMonOpening=true; // set BEFORE async call to prevent race
   const AC=window.AudioContext||window.webkitAudioContext;
   if(!AC||!navigator.mediaDevices?.getUserMedia) return;
   navigator.mediaDevices.getUserMedia({
@@ -699,8 +698,9 @@ function _openEnergyMonitor(){
     _energyMonAn.smoothingTimeConstant=0.5;
     src.connect(_energyMonAn);
     _energyMonReady=true;
+    _energyMonOpening=false;
     vdbgLog('Energy monitor ready','var(--g)');
-  }).catch(()=>{});
+  }).catch(()=>{_energyMonOpening=false;});
 }
 
 // Called when Harvey starts speaking — measure his ambient level for 300ms
@@ -761,113 +761,6 @@ function stopEnergyPoll(){
   _harveyAmbientDb=-999;
 }
 
-// ══ SILERO VAD ══
-// 1.8MB ONNX model, cached in browser IndexedDB after first load
-// Replaces fixed 3s silence timer with neural speech detection
-
-async function loadSileroVAD(){
-  if(_sileroReady||_sileroSession)return true;
-  try{
-    // Use ONNX Runtime Web via CDN
-    const ort=window.ort;
-    if(!ort){
-      // Load ONNX Runtime if not present
-      await new Promise((res,rej)=>{
-        const s=document.createElement('script');
-        s.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js';
-        s.onload=res;s.onerror=rej;
-        document.head.appendChild(s);
-      });
-    }
-    // Load Silero VAD model from CDN (cached in browser after first load)
-    const modelUrl='https://cdn.jsdelivr.net/gh/snakers4/silero-vad@master/src/silero_vad.onnx';
-    _sileroSession=await window.ort.InferenceSession.create(modelUrl,{
-      executionProviders:['wasm'],
-      graphOptimizationLevel:'all'
-    });
-    _sileroReady=true;
-    _sileroH=new Float32Array(2*64).fill(0);
-    _sileroC=new Float32Array(2*64).fill(0);
-    vdbgLog('Silero VAD ready','var(--g)');
-    return true;
-  }catch(e){
-    vdbgLog('Silero unavailable -- using 3s timer fallback: '+e.message,'var(--a)');
-    return false;
-  }
-}
-
-async function _sileroInfer(audioChunk){
-  if(!_sileroReady||!_sileroSession)return 0.5;
-  try{
-    const input=new window.ort.Tensor('float32',audioChunk,[1,audioChunk.length]);
-    const sr=new window.ort.Tensor('int64',BigInt64Array.from([BigInt(16000)]),[1]);
-    const h=new window.ort.Tensor('float32',_sileroH,[2,1,64]);
-    const c=new window.ort.Tensor('float32',_sileroC,[2,1,64]);
-    const out=await _sileroSession.run({input,sr,h,c});
-    _sileroH=out.hn.data;
-    _sileroC=out.cn.data;
-    return out.output.data[0]; // speech probability 0-1
-  }catch(e){return 0.5;}
-}
-
-// Start Silero VAD on mic stream
-// When speech detected: set _sileroSpeaking=true
-// When speech ends: fire 3s timer immediately (or sooner)
-async function startSileroOnStream(stream){
-  if(!_sileroReady)return;
-  const AC=window.AudioContext||window.webkitAudioContext;
-  if(!AC)return;
-  _sileroAC=new AC({sampleRate:16000});
-  const src=_sileroAC.createMediaStreamSource(stream);
-  const bufSize=512; // ~32ms at 16kHz
-  _sileroProc=_sileroAC.createScriptProcessor(bufSize,1,1);
-  let _chunk=[];
-  _sileroProc.onaudioprocess=async(ev)=>{
-    if(micState!=='query')return;
-    const data=ev.inputBuffer.getChannelData(0);
-    _chunk.push(...data);
-    if(_chunk.length>=1536){ // ~96ms chunks for Silero
-      const frame=new Float32Array(_chunk.splice(0,1536));
-      const prob=await _sileroInfer(frame);
-      const wasSpeaking=_sileroSpeaking;
-      _sileroSpeaking=prob>0.5;
-      // Speech just ended
-      if(wasSpeaking&&!_sileroSpeaking&&_srBuffer){
-        vdbgLog('Silero: speech ended (prob='+prob.toFixed(2)+') -- firing send','var(--g)');
-        // Clear existing 3s timer and fire sooner (500ms grace)
-        clearTimeout(speechTimer);
-        speechTimer=setTimeout(()=>{
-          const toSend=(_srBuffer||ciEl.value).trim();
-          _srBuffer='';speechTimer=null;window._srRestarts=0;
-          if(!toSend)return;
-          removeLiveBubble();
-          const raw=normaliseVoiceInput(toSend);
-          const normalised=normalizeSpeech(raw);
-          ciEl.value=normalised;
-          ciEl.style.height='auto';
-          ciEl.style.height=Math.min(ciEl.scrollHeight,80)+'px';
-          vsTxt.textContent='Sending: '+normalised.slice(0,50);
-          vdbgLog('>>> SILERO SEND: ['+normalised+']','var(--c)');
-          handleInput();
-        },600); // 600ms after Silero detects end -- catches trailing words
-      }
-      // Update debug
-      const lvl=document.getElementById('vdbg-level-val');
-      if(lvl)lvl.textContent=(prob>0.5?'SPEECH':'silence')+' ('+prob.toFixed(2)+')';
-    }
-  };
-  src.connect(_sileroProc);
-  _sileroProc.connect(_sileroAC.destination);
-  _sileroStream=stream;
-  vdbgLog('Silero VAD attached to mic stream','var(--g)');
-}
-
-function stopSileroVAD(){
-  if(_sileroProc){try{_sileroProc.disconnect();}catch(e){}}
-  if(_sileroAC){try{_sileroAC.close();}catch(e){}}
-  _sileroProc=null;_sileroAC=null;_sileroStream=null;_sileroSpeaking=false;
-}
-
 function speakNext(){
   if(!_speakBusy&&_speakQueue.length>0){
     _speakBusy=true;
@@ -876,37 +769,49 @@ function speakNext(){
     u.rate=rate||VOICE_SPEED;u.pitch=0.6;u.volume=0.92;
     if(harveyVoice)u.voice=harveyVoice;
     u.onstart=()=>{
-      // Record ONLY the first 8 chars of current speech for self-filter
-      // Do NOT use _harveyRecentSpeech -- common words cause false positives after 10+ turns
       _harveyCurrentSpeech=clean.toLowerCase().slice(0,8);
-      if(vsTxt&&voiceMode)vsTxt.textContent='HARVEY SPEAKING...';
-      // Whisper: pause MediaRecorder while Harvey speaks
+      if(vsTxt&&(voiceMode||micState==='query'))vsTxt.textContent='HARVEY SPEAKING...';
+      // Abort SR completely -- only reliable way to stop self-hearing
+      if(recog&&recogBusy&&!_srPausedForTTS){
+        _srPausedForTTS=true;
+        try{recog.abort();}catch(e){}
+        recogBusy=false;
+        vdbgLog('SR paused (Harvey TTS)','var(--a)');
+      } else if(!recogBusy){
+        _srPausedForTTS=true; // SR already stopped, flag it so onend restarts
+      }
+      // Whisper: pause MediaRecorder
       if(_whisperMode&&_mediaRecorder&&_mediaRecorder.state==='recording'){
         try{_mediaRecorder.pause();}catch(e){}
       }
-      // Energy monitor: measure Harvey's level
-      if(_energyMonReady) _measureHarveyLevel();
     };
     u.onend=()=>{
       _speakBusy=false;
       document.querySelector('.hrw')?.classList.remove('speaking');
       document.getElementById('harvey-speaking-fx')?.classList.remove('active');
-      // Clear Harvey speech record immediately
       _harveyCurrentSpeech='';
       stopEnergyPoll();
-      // Whisper: resume MediaRecorder after Harvey finishes — now listen for user
+      // Restart SR after 300ms echo decay -- Harvey's voice fades before mic opens
+      if(_srPausedForTTS){
+        _srPausedForTTS=false;
+        if(micState==='query'||voiceMode){
+          setTimeout(()=>{
+            if(!_speakBusy&&!recogBusy&&(micState==='query'||voiceMode)){
+              if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
+              safeStart();
+              vdbgLog('SR restarted (echo decay done)','var(--g)');
+            }
+          },300);
+        }
+      }
+      // Whisper: resume MediaRecorder
       if(_whisperMode&&_mediaRecorder&&_mediaRecorder.state==='paused'){
         try{
-          // Short delay so speaker echo clears before we start recording again
           setTimeout(()=>{
             if(_mediaRecorder&&_mediaRecorder.state==='paused')_mediaRecorder.resume();
             if(vsTxt)vsTxt.textContent='WHISPER READY -- HOLD MIC TO SPEAK';
           },400);
         }catch(e){}
-      }
-      if(voiceMode&&micState==='query'&&!_speakBusy){
-        if(vsTxt&&!_whisperMode)vsTxt.textContent='HARVEY LISTENING — SPEAK ANYTIME';
-        if(!recogBusy&&!_whisperMode)setTimeout(()=>safeStart(),200);
       }
       speakNext();
     };
@@ -11540,7 +11445,7 @@ function normaliseVoiceInput(txt){
 function buildRecog(){
   if(!SR)return null;
   const r=new SR();
-  r.continuous=false; // fires isFinal reliably on all platforms
+  r.continuous=false; // isFinal fires reliably -- we restart manually in onend
   r.interimResults=true;
   try{r.lang=IS_IOS?'en-US':'en-SG';}catch(e){r.lang='en-US';}
   r.maxAlternatives=3;
@@ -11548,9 +11453,9 @@ function buildRecog(){
   r.onstart=()=>{
     recogBusy=true;
     window._srRestarts=(window._srRestarts||0)+1;
-    vdbgLog('SR #'+window._srRestarts+' buf:['+_srBuffer.slice(0,20)+']','var(--g)');
+    vdbgLog('SR #'+window._srRestarts+' buf:['+(_srBuffer||'').slice(0,20)+']','var(--g)');
     const stEl=document.getElementById('vdbg-state-val');
-    if(stEl)stEl.textContent=micState+' #'+window._srRestarts;
+    if(stEl)stEl.textContent=micState+' #'+(window._srRestarts||0);
     if(micState==='query'){
       mbEl.classList.add('active');
       vsBar.style.display='flex';
@@ -11567,7 +11472,7 @@ function buildRecog(){
     if(!final&&!interim)return;
     if(micState!=='query')return;
 
-    // Show interim live in input box (not buffered -- just preview)
+    // Interim: preview only in input box -- don't touch timer or buffer
     if(interim&&!final){
       const preview=(_srBuffer+(interim?' '+interim:'')).trim();
       ciEl.value=preview;
@@ -11576,17 +11481,18 @@ function buildRecog(){
       vsTxt.textContent='> '+preview.slice(-60)+' -- listening...';
       vsBar.style.color='var(--g)';
       showLiveBubble(preview);
-      return; // Don't touch timer on interim -- wait for final
+      vdbgLog('i:'+interim.slice(0,30),'#555');
+      return;
     }
 
-    // final arrived -- append to module-level buffer permanently
+    // Final: append permanently to module-level buffer
     if(final){
       _srBuffer=(_srBuffer+' '+final).trim();
       const heardEl=document.getElementById('vdbg-heard');
       if(heardEl)heardEl.textContent=_srBuffer;
       vdbgLog('FINAL:['+final.trim()+'] BUF:['+_srBuffer+']','#fff');
 
-      // Show full buffer
+      // Update display with full buffer
       ciEl.value=_srBuffer;
       ciEl.style.height='auto';
       ciEl.style.height=Math.min(ciEl.scrollHeight,120)+'px';
@@ -11594,29 +11500,9 @@ function buildRecog(){
       vsBar.style.color='var(--g)';
       showLiveBubble(_srBuffer);
 
-      const _raw=normaliseVoiceInput(final.trim());
-
-      // Self-filter: only when Harvey actively speaking AND first word matches
-      if(_speakBusy&&_harveyCurrentSpeech&&_harveyCurrentSpeech.length>3){
-        const _firstWord=_harveyCurrentSpeech.split(' ')[0];
-        if(_firstWord.length>3&&_raw.toLowerCase().startsWith(_firstWord)){
-          vdbgLog('Self-filtered: '+_raw.slice(0,20),'#555');
-          _srBuffer=_srBuffer.slice(0,Math.max(0,_srBuffer.length-final.trim().length)).trim();
-          return;
-        }
-      }
-
-      // Cancel Harvey if user speaks over him
-      if(_speakBusy&&final.trim().split(' ').length>1){
-        window.speechSynthesis.cancel();
-        _speakQueue=[];_speakBusy=false;_harveyCurrentSpeech='';
-        stopEnergyPoll();
-        vdbgLog('User interrupted Harvey','var(--a)');
-        if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';
-      }
-
-      // System commands
+      // System commands -- only when Harvey NOT speaking
       if(!_speakBusy){
+        const _raw=normaliseVoiceInput(final.trim());
         if(isSilenceTTS(_raw)){stopSpeech();_srBuffer='';if(vsTxt)vsTxt.textContent='HARVEY LISTENING -- SPEAK ANYTIME';return;}
         if(isDeactivationPhrase(_raw)){deactivateVoiceMode(false);return;}
         if(isSkipPhrase(_raw)){
@@ -11626,12 +11512,13 @@ function buildRecog(){
         }
       }
 
-      // Reset 3s timer on every final -- sends full _srBuffer after 3s silence
+      // 3s silence timer -- resets on every final word
+      // Fires 3s after last word -- sends full _srBuffer
       clearTimeout(speechTimer);
       speechTimer=setTimeout(()=>{
         const toSend=(_srBuffer||ciEl.value).trim();
         _srBuffer='';speechTimer=null;window._srRestarts=0;
-        if(!toSend){vdbgLog('3s -- nothing','#555');return;}
+        if(!toSend){vdbgLog('3s -- nothing to send','#555');return;}
         removeLiveBubble();
         const raw=normaliseVoiceInput(toSend);
         const normalised=normalizeSpeech(raw);
@@ -11660,12 +11547,11 @@ function buildRecog(){
     recogBusy=false;
     mbEl.classList.remove('active');
     if(!voiceMode)vsBar.style.display='none';
-    vdbgLog('END buf:['+_srBuffer.slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
-    if(micState==='query'){
-      // Restart immediately to catch next utterance
-      // Buffer preserved at module level -- nothing lost
+    vdbgLog('END buf:['+(_srBuffer||'').slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
+    if(micState==='query'&&!_srPausedForTTS){
+      // Restart to catch next utterance -- buffer preserved at module level
       const delay=IS_IOS?450:150;
-      setTimeout(()=>{ if(micState==='query'&&!recogBusy)safeStart(); },delay);
+      setTimeout(()=>{ if(micState==='query'&&!recogBusy&&!_srPausedForTTS)safeStart(); },delay);
     }
   };
   return r;
@@ -11674,22 +11560,15 @@ function buildRecog(){
 function safeStart(){
   if(micState==='off'||!SR)return;
   if(recogBusy){
-    setTimeout(()=>{if(recogBusy){recogBusy=false;safeStart();}},2000);
+    setTimeout(()=>{
+      if(recogBusy){recogBusy=false;safeStart();}
+    },2000);
     return;
   }
   recog=buildRecog();
   try{
     recog.start();
-    // Attach Silero VAD on first start -- loads model lazily
-    if(!_sileroStream&&micState==='query'){
-      navigator.mediaDevices?.getUserMedia({
-        audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}
-      }).then(async stream=>{
-        const loaded=await loadSileroVAD();
-        if(loaded) startSileroOnStream(stream);
-        else stream.getTracks().forEach(t=>t.stop());
-      }).catch(()=>{});
-    }
+
   }catch(e){
     recogBusy=false;
     setTimeout(()=>safeStart(),IS_IOS?2500:1000);
