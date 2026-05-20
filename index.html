@@ -922,12 +922,22 @@ const fmtP=p=>'$'+Number(p).toLocaleString();
 
 
 function stopSpeech(){
-  // Resume listening after manual stop
   if(currentAudio){currentAudio.pause();try{currentAudio.currentTime=0;}catch(e){}currentAudio=null;}
   window.speechSynthesis?.cancel();
   if(typeof _speakQueue!=='undefined'){_speakQueue=[];_speakBusy=false;}
+  _harveyCurrentSpeech='';
   document.querySelector('.hrw')?.classList.remove('speaking');
   document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+  // Clear TTS pause flag and restart SR after echo decay
+  if(_srPausedForTTS){
+    _srPausedForTTS=false;
+    setTimeout(()=>{
+      if(!recogBusy&&(micState==='query'||voiceMode)){
+        if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
+        safeStart();
+      }
+    },300);
+  }
 }
 
 
@@ -11085,8 +11095,10 @@ function isDeactivationPhrase(txt){
   return /go to sleep|sleep harvey|deactivate|go offline|offline now|stop listening|voice mode off|stop voice|quiet mode|enough harvey/i.test(txt);
 }
 function isSilenceTTS(txt){
-  // Cancel Harvey's current speech but keep voice mode on
-  return /^stop$|^ok stop$|^stop it$|^shut up$|^enough$|^ok enough$|^pause$|^stop talking$|^be quiet$|^quiet$|^shhh?$/i.test(txt.trim());
+  // Cancel Harvey's speech -- keep voice mode on
+  // Exact phrases only so "stop loss" or "stop at block" don't trigger
+  const t=txt.trim().toLowerCase();
+  return /^(stop|ok stop|stop it|stop talking|stop now|shut up|enough|ok enough|pause|be quiet|quiet|shhh?|diam|okay stop|alright stop|right stop|ya stop|yeah stop)$/.test(t);
 }
 function isSkipPhrase(txt){
   return /skip|go straight|cut to|just tell me|get to the point|straight to|no need intro|skip all these|just show me|direct answer|just the data|results only/i.test(txt);
