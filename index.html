@@ -332,38 +332,6 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .sfx-ring:nth-child(4){width:400px;height:400px}
   .sfx-ring:nth-child(5){width:480px;height:480px}
 }
-/* ── iPhone 12 / small phones (≤430px) ── */
-@media(max-width:430px){
-  /* vs-bar: lift above mob-nav + iOS home indicator so it's never hidden */
-  .vs-bar{
-    bottom:calc(72px + env(safe-area-inset-bottom,34px)) !important;
-    font-size:8px !important;
-    padding:4px 12px !important;
-    max-width:calc(100vw - 32px);
-    white-space:nowrap;
-    overflow:hidden;
-    text-overflow:ellipsis;
-  }
-  /* Voice toggle button -- keep visible, don't let it get squeezed off */
-  .vtog{
-    font-size:7px !important;
-    padding:3px 6px !important;
-    white-space:nowrap;
-    flex-shrink:0;
-    min-width:0;
-  }
-  /* Topbar -- allow wrapping so vtog isn't pushed off screen */
-  .tb-right{
-    gap:4px;
-    flex-shrink:0;
-    min-width:0;
-  }
-  /* Slightly smaller topbar text on very narrow screens */
-  .lname{font-size:10px !important}
-  /* Chips row -- don't overflow horizontally */
-  .chips{padding:4px 8px}
-}
-
 </style>
 </head>
 <body>
@@ -11727,7 +11695,6 @@ function activateVoiceMode(){
 
 function deactivateVoiceMode(silent){
   voiceMode=false;
-  clearTimeout(_iosWatchdogTimer);_iosWatchdogTimer=null;
   if(vmBadge)vmBadge.classList.remove('active');
   if(vsBar){vsBar.classList.remove('voice-active');vsBar.style.display='none';}
   if(!silent){
@@ -12476,22 +12443,7 @@ function buildRecog(){
       vsSup.style.color='var(--r)';
       voiceMode=false;vmBadge.classList.remove('active');micState='off';return;
     }
-    if(micState==='off')return;
-    // iOS-specific: 'aborted','network','audio-capture' mean AVAudioSession is stale
-    // Force a full recog rebuild rather than just restart -- prevents the 2min hang
-    if(IS_IOS&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture')){
-      vdbgLog('iOS SR error '+e.error+' -- full rebuild','var(--a)');
-      recog=null; // force buildRecog() to create fresh instance
-      _iosSrErrors=((_iosSrErrors||0)+1);
-      // Exponential backoff after repeated errors to let AVAudioSession recover
-      const backoff=Math.min(500*Math.pow(1.5,_iosSrErrors),8000);
-      setTimeout(()=>{
-        if(micState!=='off'&&!_speakBusy){_iosSrErrors=0;safeStart();}
-      },backoff);
-      return;
-    }
-    _iosSrErrors=0;
-    setTimeout(()=>safeStart(),IS_IOS?2500:1200);
+    if(micState!=='off')setTimeout(()=>safeStart(),IS_IOS?2500:1200);
   };
 
   r.onend=()=>{
@@ -12736,29 +12688,6 @@ async function handleBlockDetail(block, street, town, ctx){
   };
 
   mode='menu';loading=false;sbEl.disabled=false;
-}
-
-let _iosSrErrors=0; // iOS error counter for backoff
-let _iosWatchdogTimer=null;
-
-// iOS SR watchdog -- Safari's AVAudioSession stales after ~45s of inactivity
-// Force a full rebuild periodically to prevent the 2-minute crash
-function _startIosWatchdog(){
-  if(!IS_IOS)return;
-  clearTimeout(_iosWatchdogTimer);
-  _iosWatchdogTimer=setTimeout(()=>{
-    if(micState==='off'||_speakBusy||!voiceMode)return;
-    // Only watchdog if SR is supposed to be running but may be stale
-    vdbgLog('iOS watchdog: rebuilding SR session','var(--a)');
-    try{if(recog)recog.abort();}catch(e){}
-    recogBusy=false;
-    recog=null;
-    setTimeout(()=>{
-      if(micState!=='off'&&!_speakBusy)safeStart();
-    },600);
-    // Reschedule
-    if(voiceMode&&micState!=='off') _startIosWatchdog();
-  },50000); // every 50s -- before Safari's ~60s hard limit
 }
 
 function safeStart(){
