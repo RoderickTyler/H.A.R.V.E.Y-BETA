@@ -3913,6 +3913,25 @@ async function handleStreetOnly(street, ctx){
   // If not, do a fast O(n) scan on first 2 words for quick candidate
   let found=reverseStreet(_canonInput||street);
   if(!found&&_canonInput&&DB.loaded){
+    // ── Street number range suggestion: "Jurong West Street 101" → show 8x, 9x series ──
+    const _inputUp=(_canonInput||street).toUpperCase().trim();
+    const _numM=_inputUp.match(/\s+(\d+)[A-Z]?\s*$/);
+    if(_numM){
+      const _inputNum=parseInt(_numM[1]);
+      const _stemStr=_inputUp.replace(/\s+\d+[A-Z]?\s*$/,'').trim();
+      const _closeStreets=_findCloseStreets(_stemStr,_inputNum,null);
+      if(_closeStreets.length){
+        const _numRange=_describeStreetNumRange(_closeStreets);
+        const _streetChips=_closeStreets.slice(0,6).map(s=>({label:s,val:s}));
+        const _noStMsg=rand([
+          `<strong>${esc(_inputUp)}</strong> doesn't exist in my records, sir. That street runs ${_numRange} — perhaps one of these?`,
+          `I couldn't find <strong>${esc(_inputUp)}</strong>, sir. The available numbers run ${_numRange}. Shall I try one?`,
+        ]);
+        harveyMsg(_noStMsg,[..._streetChips,{label:'SEARCH BY TOWN',val:'search'}]);
+        speak(`${_inputUp} isn't in my records, sir. That street runs ${_describeStreetNumRange(_closeStreets).replace(/<[^>]*>/g,'')}. Please pick one.`);
+        mode='menu';loading=false;sbEl.disabled=false;return;
+      }
+    }
     // Fallback: scan DB for streets containing ALL significant words from input
     const _words=_canonInput.toUpperCase().replace(/\d+[A-Z]?/g,'').split(/\s+/)
       .filter(w=>w.length>=4&&!/^(ST|AVE|RD|DR|CL|CRES|LOR|JLN|BT|UPP|GDNS)$/.test(w));
@@ -5448,6 +5467,67 @@ async function _handleInputInner(raw){
 
   const _parsedHasDataSignal=!!(parsed.town||parsed.street||parsed.block||parsed.floor||
     parsed.flatType||/transact|search|recent|sold|find|show|estimate|valuat|resale/i.test(raw));
+
+  // ══ DIRECT ESTIMATE: "estimate sembawang cl block 322 floor 5 4 room" ══
+  // If user includes estimate/valuation keyword AND has enough details → skip prompts, run EV now
+  const _isDirectEV=/\b(estimate|valuat|value|worth|how much|check value|ev)\b/i.test(raw);
+  if(_isDirectEV){
+    // If raw is JUST the trigger word (no location details), fall through to normal EV form
+    const _isBareTrigger=/^(estimate|estimate value|estimate valuation|valuation|value check|check value|ev|property valuation|flat valuation|valuat)$/i.test(raw.trim());
+    if(_isBareTrigger&&!parsed.block&&!parsed.street&&!parsed.floor&&!parsed.flatType&&!workingCtx.blockCtx&&!workingCtx.streetCtx){
+      // Let existing chip alias or EV form handler deal with this
+      ctx.isEV=true;
+    } else {
+    // Merge parsed into ctx
+    if(parsed.town) ctx.town=parsed.town;
+    if(parsed.street) ctx.street=canonicalStreet(parsed.street)||parsed.street;
+    if(parsed.block) ctx.block=parsed.block;
+    if(parsed.floor) ctx.floor=parsed.floor;
+    if(parsed.flatType) ctx.flatType=parsed.flatType;
+    if(parsed.size) ctx.size=parsed.size;
+    if(parsed.leaseYear) ctx.leaseYear=parsed.leaseYear;
+    // Inherit context if partial
+    if(!ctx.street&&workingCtx.streetCtx) ctx.street=workingCtx.streetCtx;
+    if(!ctx.block&&workingCtx.blockCtx) ctx.block=workingCtx.blockCtx;
+    if(!ctx.town&&workingCtx.townCtx) ctx.town=workingCtx.townCtx;
+    enrichCtx(ctx);
+    // Look up size from DB if we have block+street+flatType
+    if(ctx.block&&ctx.street&&ctx.flatType&&!ctx.size){
+      const _dbSz=lookupSizeFromDB(ctx.block,ctx.street,ctx.flatType);
+      if(_dbSz){ctx.size=_dbSz;ctx.sizeFromDB=true;ctx.sizeInferred=false;}
+    }
+    ctx.isEV=true;
+    // Check what's still missing
+    const _evMissing=buildMissingPrompt(ctx);
+    if(_evMissing.length===0){
+      // All details present → run EV immediately, no prompts
+      vdbgLog('Direct EV: all details present, running now','var(--g)');
+      mode='ev_waiting';await runEV();return;
+    } else {
+      // Partial details -- still better than before: show pre-filled form with what we have
+      // Only prompt if clearly triggered with EV intent
+      const _evFormHtml=buildHudForm(ctx);
+      harveyMsg(_evFormHtml);
+      speak('A few more details, sir. The form is pre-filled with what I have.');
+      mode='ev_waiting';loading=false;sbEl.disabled=false;return;
+    }
+    } // end else (not bare trigger)
+  }
+
+  // ══ DIRECT RESALE/BLOCK SEARCH: "resale sembawang cl block 322" ══
+  // If raw starts with resale/search/transactions keyword AND a block+street is present
+  const _isDirectResale=/^(?:resale|search|transactions?|recent|show|find|browse)\b/i.test(raw.trim());
+  const _resaleBlock=parsed.block||(workingCtx.blockCtx||convCtx.block||null);
+  const _resaleStreet=parsed.street?(canonicalStreet(parsed.street)||parsed.street):
+    (workingCtx.streetCtx||convCtx.street||null);
+  const _resaleTown=parsed.town||(workingCtx.townCtx||convCtx.town||null);
+  if(_isDirectResale&&_resaleBlock&&_resaleStreet){
+    // Go straight to block detail view -- skip all disambiguation
+    vdbgLog('Direct resale block: '+_resaleBlock+' '+_resaleStreet,'var(--c)');
+    await handleBlockDetail(_resaleBlock,_resaleStreet,_resaleTown,ctx);
+    return;
+  }
+
   // ── EXPAND SEARCH ALIASES -- "expand 2 years", "whole street", "widen" ──
   // Fires when no-data analysis shows expand chips and user voices/types intent
   const _rawLowEx=raw.toLowerCase().trim();
@@ -6066,6 +6146,32 @@ async function _handleInputInner(raw){
     loading=false;sbEl.disabled=false;return;
   }
 
+  // ── "What blocks are on [street]" / "block series for [street]" ──
+  const _blockSeriesQ=raw.match(/^(?:what|which|show|list|give me|tell me)?\s*(?:the\s+)?blocks?\s+(?:on|in|at|for|series|range(?:s)?|available)?\s+(?:on\s+|in\s+|at\s+)?(.+?)(?:\?)?$/i);
+  const _blockRangeQ=/(?:blocks?\s+(?:range|series|available|exist|on|in)|block\s+range|what\s+blocks?|which\s+blocks?|block\s+series)/i.test(raw);
+  if(_blockRangeQ&&_blockSeriesQ){
+    const _bqStreetRaw=_blockSeriesQ[1].trim();
+    const _bqFound=reverseStreet(_bqStreetRaw);
+    if(_bqFound&&_bqFound.street){
+      const _bqBlocks=_getBlocksOnStreet(_bqFound.street);
+      const _bqSeries=_describeBlockSeries(_bqBlocks);
+      const _bqSeriesSpoken=_describeBlockSeriesSpoken(_bqBlocks);
+      const _bqChips=_bqBlocks.slice(0,8).map(b=>({label:'BLK '+b,val:`block ${b} ${_bqFound.street}`}));
+      harveyMsg(rand([
+        `<strong>${esc(_bqFound.street)}</strong> runs ${_bqSeries}, sir — ${_bqBlocks.length} block${_bqBlocks.length!==1?'s':''}. Which one would you like?`,
+        `The blocks on <strong>${esc(_bqFound.street)}</strong> go ${_bqSeries}, sir. Pick one to drill down.`,
+      ]),[..._bqChips,
+        ...(_bqBlocks.length>8?[{label:`+ ${_bqBlocks.length-8} MORE`,val:_bqFound.street}]:[]),
+        {label:`← ${_bqFound.street.split(' ').slice(0,3).join(' ')}`,val:_bqFound.street},
+      ]);
+      speak(`${cleanForSpeech(_bqFound.street)} runs ${_bqSeriesSpoken}, sir.`);
+      workingCtx.lastQuestion={type:'provide_block',ref:_bqFound.street,ts:Date.now(),
+        options:_bqBlocks.map(b=>({label:'BLK '+b,val:`block ${b} ${_bqFound.street}`})),
+        street:_bqFound.street,town:_bqFound.town};
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    }
+  }
+
   // ── "Is there a X" / "Do you have X" — DB existence check ──
   const _existMatch=raw.match(/^(?:is there (?:a |an )?|do you have |do you know |got |have you got |any )(.+?)(?:\?)?$/i);
   if(_existMatch&&!_parsedHasDataSignal){
@@ -6431,6 +6537,28 @@ async function _handleInputInner(raw){
 
   if(ctx.block&&!ctx.street&&!ctx.town){
     const blockInfo=resolveBlock(ctx.block,DB);
+    if(blockInfo&&blockInfo.locations.length>1){
+      // ── Multi-street block: tell user which streets block appears on ──
+      // Also show block series for each street so user can cross-check
+      const _bStreets=blockInfo.locations.map(l=>l.street).filter(Boolean);
+      const _bSeriesLines=_bStreets.map(s=>{
+        const _bs=_getBlocksOnStreet(s);
+        return`<strong>${esc(s)}</strong> — blocks ${_describeBlockSeries(_bs).replace(/<[^>]*>/g,'')}`;
+      }).join('<br>');
+      harveyMsg(rand([
+        `Block <strong>${esc(ctx.block)}</strong> appears on multiple streets, sir:<br>${_bSeriesLines}<br>Which did you have in mind?`,
+        `I found Block <strong>${esc(ctx.block)}</strong> on ${_bStreets.length} streets, sir:<br>${_bSeriesLines}<br>Which street?`,
+      ]),[
+        ..._bStreets.map(s=>({label:s.split(' ').slice(0,4).join(' '),val:`block ${ctx.block} ${s}`})),
+        {label:'SEARCH BY TOWN',val:'search'},
+      ]);
+      speak(`Block ${ctx.block} appears on ${_bStreets.length} streets, sir — ${_bStreets.slice(0,3).map(cleanForSpeech).join(', ')}. Which street did you mean?`);
+      mode='menu';loading=false;sbEl.disabled=false;return;
+    } else if(blockInfo&&blockInfo.locations.length===1){
+      // Single match -- go straight to block detail
+      const _bl=blockInfo.locations[0];
+      await handleBlockDetail(ctx.block,_bl.street,_bl.town,ctx);return;
+    }
     if(blockInfo&&blockInfo.locations.length>1){
       harveyMsg(harveyBlockAmbiguous(ctx.block,blockInfo),[
         ...blockInfo.locations.slice(0,5).map(l=>({
@@ -12233,6 +12361,89 @@ function buildRecog(){
   return r;
 }
 
+// ══ BLOCK + STREET INTELLIGENCE HELPERS ══
+
+// Get all blocks on a street, sorted numerically
+function _getBlocksOnStreet(street){
+  if(!DB.loaded||!street)return[];
+  const recs=DB.resale.filter(r=>r.street_name===street);
+  const blocks=[...new Set(recs.map(r=>r.block))].filter(Boolean);
+  return blocks.sort((a,b)=>{
+    const na=parseInt(a),nb=parseInt(b);
+    return isNaN(na)||isNaN(nb)?a.localeCompare(b):na-nb;
+  });
+}
+
+// Describe a block list as series ranges, e.g. [31,312,313,322,323] → "31x and 32x series"
+function _describeBlockSeries(blocks){
+  if(!blocks.length)return'no blocks on record';
+  const nums=blocks.map(b=>parseInt(b)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+  if(!nums.length)return blocks.join(', ');
+  // Group by prefix (hundreds digit)
+  const groups={};
+  nums.forEach(n=>{
+    const prefix=n<100?String(n)[0]+'x':String(n).slice(0,-1)+'x';
+    (groups[prefix]=groups[prefix]||[]).push(n);
+  });
+  const keys=Object.keys(groups).sort();
+  if(keys.length===1) return`<strong>${keys[0]}</strong> series (${nums[0]}–${nums[nums.length-1]})`;
+  if(keys.length<=4) return keys.map(k=>`<strong>${k}</strong>`).join(', ')+` series`;
+  return`<strong>${nums[0]}</strong>–<strong>${nums[nums.length-1]}</strong> (${nums.length} blocks)`;
+}
+
+// Spoken version of block series (no HTML)
+function _describeBlockSeriesSpoken(blocks){
+  if(!blocks.length)return'no blocks on record';
+  const nums=blocks.map(b=>parseInt(b)).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+  if(!nums.length)return blocks.join(', ');
+  const groups={};
+  nums.forEach(n=>{
+    const prefix=n<100?String(n)[0]+'X':String(n).slice(0,-1)+'X';
+    (groups[prefix]=groups[prefix]||[]).push(n);
+  });
+  const keys=Object.keys(groups).sort();
+  if(keys.length===1)return`the ${keys[0]} series, blocks ${nums[0]} to ${nums[nums.length-1]}`;
+  if(keys.length<=4)return keys.map(k=>`${k} series`).join(' and ');
+  return`blocks ${nums[0]} to ${nums[nums.length-1]}`;
+}
+
+// Find streets whose name is numerically close to a given street name+number
+// e.g. "Jurong West Street 101" → suggest "Jurong West St 81", "Jurong West St 91"
+function _findCloseStreets(parsedStreetName, parsedNum, town){
+  if(!DB.loaded)return[];
+  // Get candidate streets: same name stem, same street type, different number
+  const numRx=/\s+(\d+[A-Z]?)$/;
+  const stemInput=parsedStreetName.toUpperCase().replace(numRx,'').trim();
+  const seen=new Set();
+  const candidates=[];
+  for(const r of DB.resale){
+    if(!r.street_name||seen.has(r.street_name))continue;
+    seen.add(r.street_name);
+    const up=r.street_name.toUpperCase();
+    const nm=up.match(numRx);
+    const stem=up.replace(numRx,'').trim();
+    if(stem===stemInput&&nm&&nm[1]!==String(parsedNum)){
+      candidates.push(r.street_name);
+    }
+  }
+  candidates.sort((a,b)=>{
+    const na=parseInt((a.match(numRx)||[0,999])[1]);
+    const nb=parseInt((b.match(numRx)||[0,999])[1]);
+    if(parsedNum){return Math.abs(na-parsedNum)-Math.abs(nb-parsedNum);}
+    return na-nb;
+  });
+  return candidates.slice(0,6);
+}
+
+// Describe street number range, e.g. ["Jurong West St 81","Jurong West St 91"] → "8x–9x series"
+function _describeStreetNumRange(streets){
+  const nums=streets.map(s=>{const m=s.match(/\s+(\d+)[A-Z]?$/i);return m?parseInt(m[1]):null;}).filter(n=>n!==null).sort((a,b)=>a-b);
+  if(!nums.length)return'';
+  if(nums.length===1)return`street ${nums[0]}`;
+  const prefixes=[...new Set(nums.map(n=>String(n).slice(0,-1)+'x'))];
+  return prefixes.length<=3?prefixes.map(p=>`<strong>${p}</strong>`).join(' and ')+' series':`<strong>${nums[0]}</strong>–<strong>${nums[nums.length-1]}</strong>`;
+}
+
 // ══ BLOCK DETAIL VIEW ══
 // Shows rich data for a specific block on a specific street
 // Called when user selects a block chip or says "block X [street]"
@@ -12261,14 +12472,27 @@ async function handleBlockDetail(block, street, town, ctx){
   const _recent=_recs.filter(r=>r.month>=cutoff24);
 
   if(!_recs.length){
-    harveyMsg(rand([
-      `No records for Block <strong>${esc(_b)}</strong>${_s?' on '+_s:''}, sir — it may be a private block or not in the resale dataset.`,
-      `Block <strong>${esc(_b)}</strong>${_s?' on '+_s:''} doesn't appear in my resale records, sir. It may not have had any resale transactions.`,
-    ]),[
-      {label:'← BACK TO STREET',val:_s||_t||'search'},
-      {label:'SEARCH NEARBY',val:_s||_t||'search'},
+    // ── Smart block suggestion: show what blocks actually exist on this street ──
+    const _existingBlocks=_s?_getBlocksOnStreet(_s):[];
+    const _blockSeries=_existingBlocks.length?_describeBlockSeries(_existingBlocks):'none on record';
+    const _blockSeriesSpoken=_existingBlocks.length?_describeBlockSeriesSpoken(_existingBlocks):'none found';
+    const _suggChips=[
+      ...(_existingBlocks.slice(0,8).map(b=>({label:'BLK '+b,val:`block ${b} ${_s}`}))),
+      ...(_s?[{label:`← BACK TO ${_s.split(' ').slice(0,3).join(' ')}`,val:_s}]:[]),
+      ...(_t?[{label:`⬡ ALL OF ${_t}`,val:_t}]:[]),
+    ];
+    const _noBlkMsg=_existingBlocks.length?rand([
+      `Block <strong>${esc(_b)}</strong> doesn't exist on ${_s?`<strong>${esc(_s)}</strong>`:'this street'}, sir. That street runs ${_blockSeries} — perhaps one of these?`,
+      `I can't find Block <strong>${esc(_b)}</strong> on ${_s?`<strong>${esc(_s)}</strong>`:'this street'}, sir. The blocks here go ${_blockSeries}. Shall I try one?`,
+    ]):rand([
+      `No records for Block <strong>${esc(_b)}</strong>${_s?' on <strong>'+esc(_s)+'</strong>':''}, sir — it may be a private block or not in the resale dataset.`,
+      `Block <strong>${esc(_b)}</strong>${_s?' on '+_s:''} doesn't appear in my resale records, sir.`,
     ]);
-    speak(`No records for Block ${_b}${_s?' on '+_s:''}, sir.`);
+    workingCtx.lastQuestion={type:'provide_block',ref:_s,ts:Date.now(),
+      options:_existingBlocks.map(b=>({label:'BLK '+b,val:`block ${b} ${_s}`})),
+      street:_s,town:_t};
+    harveyMsg(_noBlkMsg,_suggChips);
+    speak(`Block ${_b} isn't on ${_s?cleanForSpeech(_s):'this street'}, sir. ${_existingBlocks.length?'The blocks run '+_blockSeriesSpoken+'. Please try one of the options.':''}`);
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
