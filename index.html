@@ -239,7 +239,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
 .mbtn.active{background:rgba(0,255,136,.2);border-color:var(--g);animation:mpulse 1s infinite}
 @keyframes mpulse{0%,100%{box-shadow:0 0 10px rgba(0,255,136,.3)}50%{box-shadow:0 0 28px rgba(0,255,136,.7)}}
 .mbtn svg{width:16px;height:16px}
-.ifooter{display:flex;justify-content:space-between;margin-top:6px;padding:0 2px}
+.ifooter{display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding:0 2px;flex-wrap:wrap;gap:2px}
 .ihint{font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:.8px}
 /* HUD inline form dropdowns */
 .hud-form{display:flex;flex-direction:column;gap:8px;margin-top:10px;max-width:520px}
@@ -313,7 +313,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .vtog{font-size:8px;padding:4px 7px}
   .input-area{padding:8px 10px calc(10px + env(safe-area-inset-bottom,0px))}
   .irow{padding:6px 6px 6px 12px}
-  #mb{display:none}
+  #mb{display:none}  /* phone only -- iPad gets it back below */
   .messages{padding:10px 12px}
   .mbub{font-size:12px;padding:8px 11px}
   .ev-price.mid{font-size:22px}
@@ -333,6 +333,16 @@ tr:hover td{background:rgba(0,212,255,.03)}
   .sfx-ring:nth-child(5){width:480px;height:480px}
 }
 /* ── iPhone 12 / small phones (≤430px) ── */
+/* ── iPad / tablet (601px–1024px) — restore mic btn, fix topbar ── */
+@media(min-width:601px) and (max-width:1024px){
+  #mb{display:flex !important}  /* restore mic button hidden by 768px rule */
+  .vtog{font-size:8px;padding:4px 8px;white-space:nowrap;flex-shrink:0}
+  .tb-right{gap:8px;flex-shrink:0}
+  .vs-bar{bottom:10px !important}  /* no mob-nav on iPad */
+  .ifooter{display:flex !important}
+  .ihint{font-size:7px}
+}
+
 @media(max-width:430px){
   /* vs-bar: lift above mob-nav + iOS home indicator so it's never hidden */
   .vs-bar{
@@ -826,18 +836,18 @@ function _isHarveyEcho(text){
   if(!text||!_harveySpeechFull) return false;
   const t=text.toLowerCase().trim();
   const h=_harveySpeechFull;
-  // Check if any 6+ word sequence from Harvey's speech appears in the STT result
   const tWords=t.split(/\s+/).filter(w=>w.length>2);
   const hWords=h.split(/\s+/).filter(w=>w.length>2);
-  if(tWords.length<2) return false;
-  // Count how many words from t appear in h in sequence
+  // Short phrases (≤3 words) are almost certainly user commands, not echo -- never suppress
+  if(tWords.length<=3) return false;
+  // Only apply echo detection to longer phrases (4+ words)
   let matches=0;
   for(const w of tWords){
     if(hWords.some(hw=>hw.includes(w)||w.includes(hw))) matches++;
   }
   const ratio=matches/tWords.length;
-  // If >55% of the heard words match Harvey's speech → echo
-  return ratio>0.55;
+  // Raise threshold to 70% to avoid false positives on location names Harvey mentioned
+  return ratio>0.70;
 }
 
 function speakNext(){
@@ -4502,11 +4512,38 @@ async function _handleInputInner(raw){
   const _rawT=raw.trim().toLowerCase();
   const _evPhrases=/^(estimate|estimate value|estimate valuation|valuation|value check|check value|ev|estimate my flat|value my flat|how much is my flat|what is my flat worth|property valuation|flat valuation|valuat)$/i;
   const _srchPhrases=/^(search|resale search|search transactions|resale transactions|transactions|recent transactions|show transactions|find transactions|browse resale|resale records|recent sales|recent resale|show me resale|resale data|transaction data)$/i;
-  if(_evPhrases.test(_rawT)&&!ctx.block&&!ctx.street&&!ctx.town){
-    ciEl.value='estimate value';await _handleInputInner('estimate value');return;
+  // EV chip / voice: always open EV form regardless of existing ctx
+  if(_evPhrases.test(_rawT)){
+    ctx.isEV=true;
+    enrichCtx(ctx);
+    const _evMiss=buildMissingPrompt(ctx);
+    if(_evMiss.length===0){
+      mode='ev_waiting';await runEV();return;
+    }
+    const _evForm=buildHudForm(ctx);
+    harveyMsg(_evForm);
+    speak('A few details to get your estimate, sir.');
+    mode='ev_waiting';loading=false;sbEl.disabled=false;return;
   }
+  // Search chip / voice: open search card directly
   if(_srchPhrases.test(_rawT)){
-    ciEl.value='search';await _handleInputInner('search');return;
+    const _scTown=workingCtx.townCtx||convCtx.town||'';
+    const _scStreet=workingCtx.streetCtx||convCtx.street||null;
+    const _scBlock=workingCtx.blockCtx||convCtx.block||null;
+    // Build and show search card directly
+    const _sfHtml=buildSearchForm({town:_scTown,street:_scStreet,block:_scBlock});
+    if(_sfHtml){
+      harveyMsg(_sfHtml);
+      speak(rand(['What are we searching for, sir?','Search form ready, sir.','What location, sir?']));
+      mode='srch_waiting';loading=false;sbEl.disabled=false;return;
+    }
+    // Fallback: set mode and run search if we have ctx
+    ctx.isEV=false;
+    mode='srch_waiting';
+    if(ctx.town||ctx.street){await runSearch();return;}
+    // No ctx -- show the search card via __searchcard__
+    const _scRaw='__searchcard_'+(workingCtx.townCtx||convCtx.town||'')+'__';
+    await _handleInputInner(_scRaw);return;
   }
 
   // ══ SYSTEM COMMANDS — checked before anything else ══
@@ -5589,8 +5626,13 @@ async function _handleInputInner(raw){
     // If raw is JUST the trigger word (no location details), fall through to normal EV form
     const _isBareTrigger=/^(estimate|estimate value|estimate valuation|valuation|value check|check value|ev|property valuation|flat valuation|valuat)$/i.test(raw.trim());
     if(_isBareTrigger&&!parsed.block&&!parsed.street&&!parsed.floor&&!parsed.flatType&&!workingCtx.blockCtx&&!workingCtx.streetCtx){
-      // Let existing chip alias or EV form handler deal with this
+      // Bare trigger with no location -- just open the EV form
       ctx.isEV=true;
+      enrichCtx(ctx);
+      const _btForm=buildHudForm(ctx);
+      harveyMsg(_btForm);
+      speak('A few details to get your estimate, sir. Fill in what you know.');
+      mode='ev_waiting';loading=false;sbEl.disabled=false;return;
     } else {
     // Merge parsed into ctx
     if(parsed.town) ctx.town=parsed.town;
@@ -12442,9 +12484,10 @@ function buildRecog(){
         }
       }
 
-      // 3s silence timer -- resets on every final word
-      // Fires 3s after last word -- sends full _srBuffer
+      // Silence timer -- 1.8s for short phrases, 2.8s for longer ones
+      // Short commands fire faster; longer sentences get time to complete
       clearTimeout(speechTimer);
+      const _timerDelay=(_srBuffer.trim().split(/\s+/).length<=3)?1800:2800;
       speechTimer=setTimeout(()=>{
         const toSend=(_srBuffer||ciEl.value).trim();
         _srBuffer='';speechTimer=null;window._srRestarts=0;
@@ -13058,4 +13101,4 @@ window.addEventListener('load',async()=>{
 });
 </script>
 </body>
-</html>
+</html>        const _deduped=toSend.replace(/(\b\w+)(\s+\1)+/gi,'$1');
