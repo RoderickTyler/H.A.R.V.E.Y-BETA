@@ -887,11 +887,53 @@ function speakThisMsg(btn,txt){
 
 function speak(txt,_priority=false){
   if(!voiceOn||!txt)return;
-  const clean=cleanForSpeech(txt);
+  const clean=cleanForSpeech(_shortMode?_condenseForShortMode(txt):txt);
   if(!clean)return;
   if(_priority){_speakQueue=[];stopSpeech();_speakBusy=false;}
-  _speakQueue.push({clean,rate:VOICE_SPEED});
+  _speakQueue.push({clean,rate:_shortMode?1.05:VOICE_SPEED});
   if(!_speakBusy)speakNext();
+}
+
+function _condenseForShortMode(txt){
+  if(!txt)return txt;
+  let s=txt.replace(/<[^>]*>/g,'');
+  s=s.replace(/^(Sir[,.]?\s+|I\s+(have|found|see|notice|observe)[^.]*\.\s*)/i,'');
+  s=s.replace(/(sir[,.]?\s*$|as always[^.]*\.|a great pleasure[^.]*\.|shall I[^?]*\?|what would you[^?]*\?|anything else[^?]*\?)/gi,'');
+  s=s.replace(/^(There (are|is|were|was)|I can see|Looking at|Based on|According to|In terms of|It appears that|It seems|Notably|Interestingly|Remarkably)\s+/i,'');
+  s=s.replace(/\s+/g,' ').trim();
+  const sentences=s.match(/[^.!?]+[.!?]*/g)||[s];
+  return sentences.slice(0,2).join(' ').trim();
+}
+
+function _shortSpeakEV(median,txnCount,dataWindow,street,block,flatType,floor){
+  const priceStr=median?'$'+(Math.round(median/1000))+'k':'no price data';
+  const locStr=[block?'Block '+block:'',street?cleanForSpeech(street):''].filter(Boolean).join(', ');
+  const txnNote=txnCount<=3?' — limited data, '+txnCount+' transaction'+(txnCount!==1?'s only':'only')
+    :'. Based on '+txnCount+' transaction'+(txnCount!==1?'s':'');
+  const flagNote=dataWindow===12?' One year data.':dataWindow<=6?' Six month data.':'';
+  return (priceStr+txnNote+flagNote+' '+(flatType||'')+' '+(floor?'Level '+floor:'')+' '+locStr+'.').replace(/\s+/g,' ').trim();
+}
+
+function _shortSpeakStreet(street,txnCount,median){
+  const s=street?cleanForSpeech(street):'This street';
+  const med=median?'Median $'+(Math.round(median/1000))+'k.':'';
+  return s+'. '+txnCount+' transaction'+(txnCount!==1?'s':'')+' in 12 months. '+med;
+}
+
+function _shortSpeakBlock(block,street,txnCount,avg,flatTypes,floorRange){
+  const loc='Block '+block+(street?', '+cleanForSpeech(street):'');
+  const avgStr=avg?'Average $'+(Math.round(avg/1000))+'k.':'';
+  const ftStr=flatTypes&&flatTypes.length?flatTypes.join(', ')+'.':'';
+  const flStr=floorRange?'Floors '+floorRange+'.':'';
+  return (loc+'. '+txnCount+' transaction'+(txnCount!==1?'s':'')+' in 24 months. '+avgStr+' '+ftStr+' '+flStr).replace(/\s+/g,' ').trim();
+}
+
+function _shortSpeakAnalysis(dir,price,block,street,town,flatType,size,leaseYear){
+  const dirWord=dir==='lowest'?'Lowest':'Highest';
+  const priceStr='$'+(price>=1000000?(price/1000000).toFixed(2)+'M':Math.round(price/1000)+'k');
+  const locParts=[block?'Block '+block:'',street?cleanForSpeech(street):town||''].filter(Boolean);
+  const detailParts=[flatType||'',size?size+'sqm':'',leaseYear?'Lease '+leaseYear:''].filter(Boolean);
+  return (dirWord+': '+priceStr+'. '+locParts.join(', ')+'. '+detailParts.join(', ')+'.').replace(/\s+/g,' ').trim();
 }
 function speakNow(txt){speak(txt,true);}// immediate, cancels queue
 
@@ -3080,7 +3122,14 @@ function showTransactions(recs,params,is6mo){
       closeLine=closes[Math.floor(Math.random()*closes.length)];
     }
     harveyMsg(insight+(closeLine?`<br><br><em style="color:var(--t2);font-size:11px">${closeLine}</em>`:''),chips);
-    speak(insight.replace(/<[^>]*>/g,'').slice(0,220));
+    if(_shortMode){
+      const _svMedian=median||avg;
+      const _svTxn=recs.length;
+      const _svWindow=params._dataWindow||12;
+      speak(_shortSpeakEV(_svMedian,_svTxn,_svWindow,params.street,params.block,params.flatType,params.floor));
+    } else {
+      speak(insight.replace(/<[^>]*>/g,'').slice(0,220));
+    }
   },1400);
   mode='menu';
 }
@@ -4043,7 +4092,13 @@ async function handleStreetOnly(street, ctx){
       </div>
     </div>`;
   msgsEl.appendChild(d);bot();
-  speak(`${recs.length} transaction${recs.length!==1?'s':''} found on ${found.street}, sir. Median price ${fmtP(median)}.`);
+  if(_shortMode){
+        const _stPrices=recs.map(r=>Number(r.resale_price)).filter(p=>p>0).sort((a,b)=>a-b);
+        const _stMed=_stPrices.length?_stPrices[Math.floor(_stPrices.length/2)]:0;
+        speak(_shortSpeakStreet(found.street,recs.length,_stMed));
+      } else {
+        speak(`${recs.length} transaction${recs.length!==1?'s':''} found on ${found.street}, sir. Median price ${fmtP(median)}.`);
+      }
 
   ctx.town=found.town;ctx.street=found.street;
   convCtx.street=found.street;convCtx.town=found.town||convCtx.town;
@@ -4388,6 +4443,25 @@ async function _handleInputInner(raw){
         _bdResolved?.town||workingCtx.townCtx||convCtx.town,ctx);
       return;
     }
+  }
+
+  // ══ SHORT FORM / LONG FORM MODE TOGGLE (text) ══
+  const _rawTrimMode=raw.trim().toLowerCase();
+  if(/^(short form|short mode|tldr|tl;?dr|concise mode|data only|just data|less talking|talk less)$/.test(_rawTrimMode)){
+    _shortMode=true;
+    harveyMsg('Short form activated, sir — I\'ll read prices and key data only. Say <strong>long form</strong> to restore.',[
+      {label:'LONG FORM',val:'long form'},{label:'TEST ESTIMATE',val:'estimate value'},
+    ]);
+    speak('Short form on, sir.');
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+  if(/^(long form|long mode|full mode|full form|verbose|normal mode|detailed|back to normal|standard mode)$/.test(_rawTrimMode)){
+    _shortMode=false;
+    harveyMsg('Long form restored, sir — full analysis and context as normal.',[
+      {label:'SHORT FORM',val:'short form'},{label:'ESTIMATE VALUATION',val:'estimate value'},
+    ]);
+    speak('Long form restored, sir.');
+    mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
   // ══ NATURAL LANGUAGE CHIP ALIASES ══
@@ -5162,7 +5236,14 @@ async function _handleInputInner(raw){
         <div class="sc"><span class="svv">${fmtP(Math.max(...prices))}</span><span class="sll">HIGHEST</span></div>
       </div></div>`;
     msgsEl.appendChild(d2);bot();
-    speak(isLowest?`The most affordable${_effectiveFilter?' '+_effectiveFilter.toLowerCase():''} flat transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir.`:`The most expensive${_effectiveFilter?' '+_effectiveFilter.toLowerCase():''} flat went for ${Math.round(prices[0]/1000)} thousand dollars, sir. Across ${_streetSet.size} street${_streetSet.size!==1?'s':''}.`);
+        if(_shortMode){
+      const _topRec=_top[0];
+      speak(_shortSpeakAnalysis(isLowest?'lowest':'highest',prices[0],
+        _topRec?.block,_topRec?.street_name,_analyseTown,_effectiveFilter,
+        _topRec?.floor_area_sqm,_topRec?.lease_commence_date));
+    } else {
+      speak(isLowest?`The most affordable${_effectiveFilter?' '+_effectiveFilter.toLowerCase():''} flat transacted at ${Math.round(prices[0]/1000)} thousand dollars, sir.`:`The most expensive${_effectiveFilter?' '+_effectiveFilter.toLowerCase():''} flat went for ${Math.round(prices[0]/1000)} thousand dollars, sir. Across ${_streetSet.size} street${_streetSet.size!==1?'s':''}.`);
+    }
     const _aftStreet=_analyseStreet;
     const _aftTown=_analyseTown;
     const _aftType=_effectiveFilter;
@@ -12298,6 +12379,23 @@ function buildRecog(){
       }
 
       // Other commands only when Harvey not speaking
+      if(/^(short form|short mode|tldr|tl;?dr|concise mode|data only|just data|less talking|talk less)$/i.test(_raw.trim())){
+        _shortMode=true;
+        harveyMsg('Short form activated, sir — data and prices only.',null);
+        speak('Short form on, sir.');
+        _srBuffer='';clearTimeout(speechTimer);speechTimer=null;
+        setTimeout(()=>{if(micState==='query'&&!recogBusy)safeStart();},400);
+        return;
+      }
+      if(/^(long form|long mode|full mode|full form|verbose|normal mode|detailed|back to normal|standard mode)$/i.test(_raw.trim())){
+        _shortMode=false;
+        harveyMsg('Long form restored, sir — full analysis and context.',null);
+        speak('Long form restored, sir.');
+        _srBuffer='';clearTimeout(speechTimer);speechTimer=null;
+        setTimeout(()=>{if(micState==='query'&&!recogBusy)safeStart();},400);
+        return;
+      }
+
       if(!_speakBusy){
         if(isDeactivationPhrase(_raw)){deactivateVoiceMode(false);return;}
         if(isSkipPhrase(_raw)){
@@ -12571,7 +12669,11 @@ async function handleBlockDetail(block, street, town, ctx){
     `Block <strong>${esc(_b)}</strong> has <strong>${_ftSet.length}</strong> flat type${_ftSet.length!==1?'s':''} — ${_ftSet.join(', ')}. Floors ${_floorStr}. ${_prices.length?`Average price <strong style="color:var(--g)">${fmtP(_avgP)}</strong> over the last 2 years. `:''}What would you like to know, sir?`,
     `There are <strong>${_recent.length}</strong> transactions in the last 24 months for Block <strong>${esc(_b)}</strong>, sir. Highest floor: <strong>${_maxFloor||'—'}</strong>. What are we after?`,
   ]),_aftChips),800);
-  speak(`Block ${_b}${_s?' on '+cleanForSpeech(_s):''} — ${_ftSet.length} flat type${_ftSet.length!==1?'s':''}. Floors ${_floorStr}. ${_avgP?'Average price '+Math.round(_avgP/1000)+' thousand. ':''}`);
+  if(_shortMode){
+    speak(_shortSpeakBlock(_b,_s,_recent.length,_avgP,_ftSet,_minFloor&&_maxFloor?_minFloor+' to '+_maxFloor:null));
+  } else {
+    speak(`Block ${_b}${_s?' on '+cleanForSpeech(_s):''} — ${_ftSet.length} flat type${_ftSet.length!==1?'s':''}. Floors ${_floorStr}. ${_avgP?'Average price '+Math.round(_avgP/1000)+' thousand. ':''}`);
+  }
 
   // Store question context for voice follow-up
   workingCtx.lastQuestion={
