@@ -14009,7 +14009,7 @@ function buildRecog(){
   const r=new SR();
   // iOS: continuous=true prevents session ending after first pause mid-sentence
   // Android/desktop: continuous=false fires isFinal reliably
-  r.continuous=IS_IOS?true:false;
+  r.continuous=false;
   r.interimResults=true;
   try{r.lang=IS_IOS?'en-US':'en-SG';}catch(e){r.lang='en-US';}
   r.maxAlternatives=3;
@@ -14325,40 +14325,8 @@ function buildRecog(){
     if(!voiceMode)vsBar.style.display='none';
     vdbgLog('END buf:['+(_srBuffer||'').slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
     if(micState==='query'&&!_srPausedForTTS){
-      if(IS_IOS&&_srBuffer&&_srBuffer.trim().length>1){
-        // iOS: session ended while we have buffered speech
-        // If timer is running, fire it now (don't wait). If no timer, start one fast.
-        vdbgLog('iOS onend with buffer: '+_srBuffer.slice(0,30),'var(--a)');
-        if(speechTimer){
-          // Timer is pending — cancel and fire immediately
-          clearTimeout(speechTimer);speechTimer=null;
-          const toSend=_srBuffer.trim();
-          _srBuffer='';
-          const _norm=normalizeSpeech(normaliseVoiceInput(toSend));
-          if(_norm&&_norm.length>1){
-            removeLiveBubble();
-            ciEl.value=_norm;
-            vsTxt.textContent='Sending: '+_norm.slice(0,50);
-            vdbgLog('iOS: fired early send: '+_norm,'var(--c)');
-            handleInput();
-          }
-        } else {
-          // No timer — start a short one to catch any trailing final results
-          speechTimer=setTimeout(()=>{
-            const toSend=_srBuffer.trim();_srBuffer='';speechTimer=null;
-            if(!toSend)return;
-            const _norm=normalizeSpeech(normaliseVoiceInput(toSend));
-            if(_norm&&_norm.length>1){
-              removeLiveBubble();ciEl.value=_norm;
-              vsTxt.textContent='Sending: '+_norm.slice(0,50);
-              vdbgLog('iOS: delayed send: '+_norm,'var(--c)');
-              handleInput();
-            }
-          },400);
-        }
-      }
-      // Restart to catch next utterance
-      const delay=IS_IOS?500:150;
+      // Restart to catch next utterance -- buffer preserved at module level
+      const delay=IS_IOS?450:150;
       setTimeout(()=>{ if(micState==='query'&&!recogBusy&&!_srPausedForTTS)safeStart(); },delay);
     }
   };
