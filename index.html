@@ -14305,18 +14305,18 @@ function buildRecog(){
     // iOS-specific: 'aborted','network','audio-capture' mean AVAudioSession is stale
     // Force a full recog rebuild rather than just restart -- prevents the 2min hang
     if(IS_IOS&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture')){
-      vdbgLog('iOS SR error '+e.error+' -- full rebuild','var(--a)');
-      recog=null; // force buildRecog() to create fresh instance
+      vdbgLog('iOS SR error '+e.error,'var(--a)');
+      recog=null;
       _iosSrErrors=((_iosSrErrors||0)+1);
-      // Exponential backoff after repeated errors to let AVAudioSession recover
-      const backoff=Math.min(500*Math.pow(1.5,_iosSrErrors),8000);
+      // Short flat backoff — don't wait 8s, just 300ms max
+      const backoff=Math.min(300*_iosSrErrors,900);
       setTimeout(()=>{
         if(micState!=='off'&&!_speakBusy){_iosSrErrors=0;safeStart();}
       },backoff);
       return;
     }
     _iosSrErrors=0;
-    setTimeout(()=>safeStart(),IS_IOS?2500:1200);
+    setTimeout(()=>safeStart(),IS_IOS?800:1200);
   };
 
   r.onend=()=>{
@@ -14325,8 +14325,25 @@ function buildRecog(){
     if(!voiceMode)vsBar.style.display='none';
     vdbgLog('END buf:['+(_srBuffer||'').slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
     if(micState==='query'&&!_srPausedForTTS){
-      // Restart to catch next utterance -- buffer preserved at module level
-      const delay=IS_IOS?450:150;
+      // iOS: if we have buffered speech, send it now instead of losing it on restart
+      if(_iosVoiceMode&&_srBuffer&&_srBuffer.trim().length>1){
+        vdbgLog('iOS onend: firing buf='+_srBuffer.slice(0,30),'var(--g)');
+        clearTimeout(speechTimer);
+        const _toSend=_srBuffer.trim();
+        _srBuffer='';speechTimer=null;
+        const _raw=normaliseVoiceInput(_toSend);
+        const _norm=normalizeSpeech(_raw);
+        if(_norm&&_norm.length>1){
+          removeLiveBubble();
+          ciEl.value=_norm;
+          ciEl.style.height='auto';
+          ciEl.style.height=Math.min(ciEl.scrollHeight,120)+'px';
+          vsTxt.textContent='Sending: '+_norm.slice(0,50);
+          vdbgLog('iOS >>> SEND: '+_norm,'var(--c)');
+          handleInput();
+        }
+      }
+      const delay=_iosVoiceMode?600:150;
       setTimeout(()=>{ if(micState==='query'&&!recogBusy&&!_srPausedForTTS)safeStart(); },delay);
     }
   };
