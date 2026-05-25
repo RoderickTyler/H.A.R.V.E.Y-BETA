@@ -797,11 +797,11 @@ function getHDBProp(block, street){
 
 const IS_MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
 // Device-aware voice defaults
-const IS_ANDROID_PHONE=IS_ANDROID&&IS_MOBILE_DEVICE;
-const VOICE_SPEED        = IS_ANDROID_PHONE?2.2 : IS_IOS?1.1 : 1.3;
-const VOICE_PITCH_DEFAULT= IS_ANDROID_PHONE?0.45: IS_IOS?0.6 : 0.55;
+const IS_ANDROID_PHONE    = IS_ANDROID && IS_MOBILE_DEVICE;
+const VOICE_SPEED         = IS_ANDROID_PHONE ? 2.2  : IS_IOS ? 1.1  : 1.3;
+const VOICE_PITCH_DEFAULT = IS_ANDROID_PHONE ? 0.45 : IS_IOS ? 0.6  : 0.55;
 let _voiceSpeed = VOICE_SPEED;
-let _voicePitch = VOICE_PITCH_DEFAULT;-like
+let _voicePitch = VOICE_PITCH_DEFAULT;
 
 let currentAudio = null;
 let harveyVoice  = null;
@@ -991,16 +991,15 @@ function _isHarveyEcho(text){
   const h=_harveySpeechFull;
   const tWords=t.split(/\s+/).filter(w=>w.length>2);
   const hWords=h.split(/\s+/).filter(w=>w.length>2);
-  // Short phrases (≤3 words) are almost certainly user commands, not echo -- never suppress
-  if(tWords.length<=3) return false;
-  // Only apply echo detection to longer phrases (4+ words)
+  // Short phrases (≤2 words) are almost certainly user commands, not echo -- never suppress
+  if(tWords.length<=2) return false;
   let matches=0;
   for(const w of tWords){
     if(hWords.some(hw=>hw.includes(w)||w.includes(hw))) matches++;
   }
   const ratio=matches/tWords.length;
-  // Raise threshold to 70% to avoid false positives on location names Harvey mentioned
-  return ratio>0.70;
+  // 65% match = likely echo (higher threshold avoids false positives on topic overlap)
+  return ratio>0.65;
 }
 
 function speakNext(){
@@ -1029,19 +1028,28 @@ function speakNext(){
       _speakBusy=false;
       document.querySelector('.hrw')?.classList.remove('speaking');
       document.getElementById('harvey-speaking-fx')?.classList.remove('active');
+      // Set echo guard: for 2s after Harvey stops, any matching text is auto-discarded
+      window._echoGuardUntil=Date.now()+2000;
+      window._echoLastSpeech=_harveySpeechFull;
       _harveyCurrentSpeech='';_harveySpeechFull='';
       stopEnergyPoll();
-      // Restart SR after 300ms echo decay -- Harvey's voice fades before mic opens
+      // Restart SR after echo decay -- longer on iOS/mobile (speaker bleed is worse)
       if(_srPausedForTTS){
         _srPausedForTTS=false;
         if(micState==='query'||voiceMode){
+          // Keep echo guard active for 1.5s after TTS ends, then reopen mic
+          const _decayMs=IS_IOS?1200:700;
           setTimeout(()=>{
-            if(!_speakBusy&&!recogBusy&&(micState==='query'||voiceMode)){
-              if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
-              safeStart();
-              vdbgLog('SR restarted (echo decay done)','var(--g)');
+            if(!_speakBusy){
+              // Echo guard stays on for 1.5s from TTS end
+              window._echoGuardUntil=Date.now()+1500;
+              if(!recogBusy&&(micState==='query'||voiceMode)){
+                if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
+                safeStart();
+                vdbgLog('SR restarted (echo decay done)','var(--g)');
+              }
             }
-          },500);
+          },_decayMs);
         }
       }
       // Whisper: resume MediaRecorder
@@ -1086,6 +1094,16 @@ function speak(txt,_priority=false){
   const clean=cleanForSpeech(_shortMode?_condenseForShortMode(txt):txt);
   if(!clean)return;
   if(_priority){_speakQueue=[];stopSpeech();_speakBusy=false;}
+  // ── IMMEDIATELY mute SR before any audio plays ──
+  // Don't wait for onstart — abort mic right now so Harvey can't hear himself
+  if(micState==='query'||voiceMode){
+    _srPausedForTTS=true;
+    _harveySpeechFull=clean.toLowerCase().slice(0,300); // per-utterance only
+    window._echoLastSpeech=_harveySpeechFull;
+    window._echoGuardUntil=Date.now()+99999; // hold open until TTS onend clears it
+    if(recog){try{recog.abort();}catch(e){}recogBusy=false;}
+    clearTimeout(window._echoGuardTimer);
+  }
   _speakQueue.push({clean,rate:_shortMode?1.05:VOICE_SPEED});
   if(!_speakBusy)speakNext();
 }
@@ -5589,28 +5607,35 @@ async function _handleInputInner(raw){
     loading=false;sbEl.disabled=false;return;
   }
 
-  // ── __voice__ — runtime speed/pitch tuning ──
+  // ── __voice__ — live speed/pitch tuning ──
   if(raw.startsWith('__voice__')||/^voice\s+(speed|pitch|rate|reset)/i.test(raw.trim())){
     const _vp={};
     if(raw.startsWith('__voice__')){
-      raw.split('|').slice(1).forEach(p=>{const eq=p.indexOf(':');if(eq>0)_vp[p.slice(0,eq).trim()]=p.slice(eq+1).trim();});
+      raw.split('|').slice(1).forEach(p=>{
+        const eq=p.indexOf(':');
+        if(eq>0)_vp[p.slice(0,eq).trim()]=p.slice(eq+1).trim();
+      });
     } else {
       const _ms=raw.match(/voice\s+(?:speed|rate)\s+([\d.]+)/i);
       const _mp=raw.match(/voice\s+pitch\s+([\d.]+)/i);
-      if(_ms)_vp.speed=_ms[1]; if(_mp)_vp.pitch=_mp[1];
+      if(_ms)_vp.speed=_ms[1];
+      if(_mp)_vp.pitch=_mp[1];
       if(/voice\s+reset/i.test(raw))_vp.reset='1';
     }
     if(_vp.reset){_voiceSpeed=VOICE_SPEED;_voicePitch=VOICE_PITCH_DEFAULT;}
     if(_vp.speed)_voiceSpeed=Math.min(2.5,Math.max(0.5,parseFloat(_vp.speed)||VOICE_SPEED));
-    if(_vp.pitch)_voicePitch=Math.min(2.0,Math.max(0,parseFloat(_vp.pitch)||VOICE_PITCH_DEFAULT));
+    if(_vp.pitch)_voicePitch=Math.min(2.0,Math.max(0.0,parseFloat(_vp.pitch)||VOICE_PITCH_DEFAULT));
     const _dev=IS_ANDROID_PHONE?'Android':IS_IOS?'iOS':'Desktop';
-    harveyMsg(`Voice tuned, sir · Speed: <strong>${_voiceSpeed.toFixed(2)}</strong> · Pitch: <strong>${_voicePitch.toFixed(2)}</strong> · ${_dev}`,[
-      {label:`▲ SPEED`,val:`__voice__|speed:${(_voiceSpeed+0.1).toFixed(2)}`},
-      {label:`▼ SPEED`,val:`__voice__|speed:${(_voiceSpeed-0.1).toFixed(2)}`},
-      {label:`▲ PITCH`,val:`__voice__|pitch:${(_voicePitch+0.05).toFixed(2)}`},
-      {label:`▼ PITCH`,val:`__voice__|pitch:${(_voicePitch-0.05).toFixed(2)}`},
-      {label:`↺ RESET`,val:`__voice__|reset:1`},
-    ]);
+    harveyMsg(
+      `Voice tuned, sir. Speed <strong>${_voiceSpeed.toFixed(2)}</strong> · Pitch <strong>${_voicePitch.toFixed(2)}</strong> · ${_dev}`,
+      [
+        {label:'▲ SPEED', val:`__voice__|speed:${(_voiceSpeed+0.1).toFixed(2)}`},
+        {label:'▼ SPEED', val:`__voice__|speed:${(_voiceSpeed-0.1).toFixed(2)}`},
+        {label:'▲ PITCH', val:`__voice__|pitch:${(_voicePitch+0.05).toFixed(2)}`},
+        {label:'▼ PITCH', val:`__voice__|pitch:${(_voicePitch-0.05).toFixed(2)}`},
+        {label:'↺ RESET', val:'__voice__|reset:1'},
+      ]
+    );
     speak(`Speed ${_voiceSpeed.toFixed(1)}, pitch ${_voicePitch.toFixed(2)}.`);
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
@@ -14065,6 +14090,7 @@ function buildRecog(){
       vdbgLog('Discarded during TTS (not a cmd): '+_cmd.slice(0,20),'#444');
       return;
     }
+
 
     // Interim: check for emergency stop FIRST before anything else
     if(interim&&!final){
