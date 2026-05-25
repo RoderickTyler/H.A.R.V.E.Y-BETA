@@ -486,7 +486,6 @@ tr:hover td{background:rgba(0,212,255,.03)}
   <div class="vs-bar" id="vs-bar">
     <span class="dot"></span>
     <span id="vs-txt">HARVEY LISTENING…</span>
-    <span id="ios-mode-btn" onclick="toggleIOSMode()" style="display:none;margin-left:8px;cursor:pointer;font-family:var(--mono);font-size:8px;padding:2px 6px;border:1px solid rgba(0,212,255,.4);border-radius:8px;color:var(--t2);letter-spacing:1px" title="Toggle iOS/Standard voice mode">IOS</span>
   </div>
 
   <!-- VOICE DEBUG PANEL -->
@@ -688,6 +687,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
               <button class="mode-btn" id="mbtn-long" onclick="_activateLongMode()" title="Long form — full analysis">📋 LONG</button>
               <button class="mode-btn" id="mbtn-standby" onclick="_activateStandby()" title="Standby mode">💤 STANDBY</button>
               <button class="mode-btn" id="mbtn-normal" onclick="_activateNormal()" title="Normal mode — resume">▶ NORMAL</button>
+              <button class="mode-btn" id="mbtn-ios" onclick="toggleIOSMode()" title="Toggle iOS/Android voice timing">🤖 AND</button>
             </span>
           </div>
         </div>
@@ -753,7 +753,19 @@ tr:hover td{background:rgba(0,212,255,.03)}
         MIC
       </button>
       <button class="mob-tab" id="mob-tab-stats" onclick="toggleMobPanel('side-right','mob-tab-stats')">
-        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="
+        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        STATS
+      </button>
+      <button class="mob-tab" id="mob-tab-search" onclick="mobSearch()">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        SEARCH
+      </button>
+    </div>
+  </nav>
+
+</div>
+
+<script>
 
 
 
@@ -4162,9 +4174,6 @@ function copyPrefill(text){
   ciEl.focus();
   vsTxt.textContent='PASTED — edit then press ENTER';
   vsBar.style.display='flex';
-  // Show iOS mode toggle on iOS devices
-  const _iosBtn=document.getElementById('ios-mode-btn');
-  if(_iosBtn&&IS_IOS) _iosBtn.style.display='inline-block';
   setTimeout(()=>{vsBar.style.display='none';},3000);
 }
 
@@ -13359,9 +13368,7 @@ let micState='off',recog=null,recogBusy=false;
 let speechTimer=null;
 
 const IS_IOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-// iOS voice mode: send immediately on isFinal instead of waiting for silence timer
-// Can be toggled by user if they're on iOS but want the standard mode
-let _iosVoiceMode=IS_IOS; // default ON for iOS devices
+let _iosVoiceMode=IS_IOS;
 let _iosSrErrors=0;
 let _iosWatchdogTimer=null;
 const IS_ANDROID=/Android/i.test(navigator.userAgent);
@@ -14147,6 +14154,7 @@ function buildRecog(){
         return;
       }
       _srBuffer=(_srBuffer+' '+final).trim();
+      if(_iosVoiceMode){clearTimeout(speechTimer);speechTimer=null;}
       const heardEl=document.getElementById('vdbg-heard');
       if(heardEl)heardEl.textContent=_srBuffer;
       vdbgLog('FINAL:['+final.trim()+'] BUF:['+_srBuffer+']','#fff');
@@ -14158,13 +14166,6 @@ function buildRecog(){
       vsTxt.textContent='> '+_srBuffer.slice(-60)+' -- still listening...';
       vsBar.style.color='var(--g)';
       showLiveBubble(_srBuffer);
-
-      // iOS: reset timer on every isFinal so 800ms is from LAST final chunk
-      // This handles multi-part finals (iOS fires multiple isFinal events per sentence)
-      if(_iosVoiceMode){
-        clearTimeout(speechTimer);
-        speechTimer=null; // will be restarted below in the normal timer path
-      }
 
       // System commands
       const _raw=normaliseVoiceInput(final.trim());
@@ -14647,17 +14648,13 @@ function safeStart(){
   }
 }
 
-function toggleIOSMode(){
-  _iosVoiceMode=!_iosVoiceMode;
-  const btn=document.getElementById('ios-mode-btn');
-  if(btn){
-    btn.textContent=_iosVoiceMode?'IOS':'STD';
-    btn.style.color=_iosVoiceMode?'var(--g)':'var(--t2)';
-    btn.style.borderColor=_iosVoiceMode?'var(--g)':'rgba(0,212,255,.4)';
-  }
-  speak(_iosVoiceMode?'iOS voice mode on, sir.':'Standard voice mode on, sir.');
+function _initIOSBtn(){
+  const btn=document.getElementById('mbtn-ios');if(!btn)return;
+  btn.textContent=_iosVoiceMode?'📱 IOS':'🤖 AND';
+  btn.style.color=_iosVoiceMode?'var(--g)':'var(--t2)';
+  btn.style.borderColor=_iosVoiceMode?'var(--g)':'rgba(0,212,255,.3)';
 }
-
+function toggleIOSMode(){_iosVoiceMode=!_iosVoiceMode;_initIOSBtn();}
 function toggleMic(){
   if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
   if(!SR){harveyMsg('Voice input is not supported on this browser, sir. Please try Chrome on Android or Safari on iOS 14.5 or later.');return;}
@@ -14897,6 +14894,7 @@ function mobSearch(){
 
 
 window.addEventListener('load',async()=>{
+  _initIOSBtn();
   setTimeout(()=>{
     document.getElementById('welcome')?.remove();
     const boot=document.createElement('div');boot.className='msg-ai';
@@ -14995,15 +14993,6 @@ window.addEventListener('load',async()=>{
   s=s.replace(/to room/gi,'two room');
   s=s.replace(/torom/gi,'two room');
   s=s.replace(/too loom/gi,'two room');
-  s=s.replace(/to loom/gi,'two room');
-  s=s.replace(/two loom/gi,'two room');
-  s=s.replace(/too rum/gi,'two room');
-  // 1-room mishears
-  s=s.replace(/one loom/gi,'one room');
-  s=s.replace(/won room/gi,'one room');
-  s=s.replace(/wun room/gi,'one room');
-
-too loom/gi,'two room');
   s=s.replace(/to loom/gi,'two room');
   s=s.replace(/two loom/gi,'two room');
   s=s.replace(/too rum/gi,'two room');
