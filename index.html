@@ -687,7 +687,6 @@ tr:hover td{background:rgba(0,212,255,.03)}
               <button class="mode-btn" id="mbtn-long" onclick="_activateLongMode()" title="Long form — full analysis">📋 LONG</button>
               <button class="mode-btn" id="mbtn-standby" onclick="_activateStandby()" title="Standby mode">💤 STANDBY</button>
               <button class="mode-btn" id="mbtn-normal" onclick="_activateNormal()" title="Normal mode — resume">▶ NORMAL</button>
-              <button class="mode-btn" id="mbtn-ios" onclick="toggleIOSMode()" title="Toggle iOS/Android voice timing">🤖 AND</button>
             </span>
           </div>
         </div>
@@ -797,7 +796,9 @@ function getHDBProp(block, street){
 }
 
 const IS_MOBILE = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
-const VOICE_SPEED = 1.1; // same on all devices — measured, Jarvis-like
+const VOICE_SPEED = 1.2; // slightly faster — more authoritative
+let _voiceSpeed = VOICE_SPEED;   // runtime-adjustable
+let _voicePitch = 0.55;          // slightly lower than default 0.6-like
 
 let currentAudio = null;
 let harveyVoice  = null;
@@ -1003,7 +1004,7 @@ function speakNext(){
     _speakBusy=true;
     const {clean,rate}=_speakQueue.shift();
     const u=new SpeechSynthesisUtterance(clean);
-    u.rate=rate||VOICE_SPEED;u.pitch=0.6;u.volume=0.92;
+    u.rate=rate||_voiceSpeed;u.pitch=_voicePitch;u.volume=0.92;
     if(harveyVoice)u.voice=harveyVoice;
     u.onstart=()=>{
       // First 8 words for prefix echo detection; full text for send-time check
@@ -5603,6 +5604,36 @@ async function _handleInputInner(raw){
     const _dbHtml=`<pre style="font-size:10px;color:var(--c);background:rgba(0,255,200,0.05);padding:8px;border-radius:4px;white-space:pre-wrap">${JSON.stringify(_dbState,null,2)}</pre>`;
     harveyMsg(`<span style="color:var(--t2);font-size:11px">// DEBUG STATE</span><br>${_dbHtml}`);
     loading=false;sbEl.disabled=false;return;
+  }
+
+  // ── __voice__ command: adjust speed and pitch at runtime ══
+  // Usage: __voice__|speed:1.2|pitch:0.5
+  // Or type: "voice speed 1.2", "voice pitch 0.5", "voice reset"
+  if(raw.startsWith('__voice__')||/^voice\s+(speed|pitch|rate|reset)/i.test(raw)){
+    const _vParts={};
+    if(raw.startsWith('__voice__')){
+      raw.split('|').slice(1).forEach(p=>{const eq=p.indexOf(':');if(eq>0)_vParts[p.slice(0,eq).trim()]=p.slice(eq+1).trim();});
+    } else {
+      const _vm=raw.match(/voice\s+(speed|rate)\s+([\d.]+)/i);
+      const _vp=raw.match(/voice\s+pitch\s+([\d.]+)/i);
+      const _vr=/voice\s+reset/i.test(raw);
+      if(_vm)_vParts.speed=_vm[2];
+      if(_vp)_vParts.pitch=_vp[1];
+      if(_vr)_vParts.reset='1';
+    }
+    if(_vParts.reset){_voiceSpeed=VOICE_SPEED;_voicePitch=0.55;}
+    if(_vParts.speed)_voiceSpeed=Math.min(2.0,Math.max(0.5,parseFloat(_vParts.speed)||VOICE_SPEED));
+    if(_vParts.pitch)_voicePitch=Math.min(2.0,Math.max(0,parseFloat(_vParts.pitch)||0.55));
+    const _vMsg=`Voice tuned, sir. Speed: <strong>${_voiceSpeed.toFixed(2)}</strong> · Pitch: <strong>${_voicePitch.toFixed(2)}</strong>`;
+    harveyMsg(_vMsg,[
+      {label:'FASTER (+0.1)',val:'__voice__|speed:'+((_voiceSpeed+0.1).toFixed(2))},
+      {label:'SLOWER (-0.1)',val:'__voice__|speed:'+((_voiceSpeed-0.1).toFixed(2))},
+      {label:'LOWER PITCH',val:'__voice__|pitch:'+((_voicePitch-0.05).toFixed(2))},
+      {label:'HIGHER PITCH',val:'__voice__|pitch:'+((_voicePitch+0.05).toFixed(2))},
+      {label:'RESET',val:'__voice__|reset:1'},
+    ]);
+    speak(`Voice adjusted. Speed ${_voiceSpeed.toFixed(1)}, pitch ${_voicePitch.toFixed(2)}.`);
+    mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
   if(raw==='__onemap_school__'){
@@ -13368,7 +13399,6 @@ let micState='off',recog=null,recogBusy=false;
 let speechTimer=null;
 
 const IS_IOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-let _iosVoiceMode=IS_IOS;
 let _iosSrErrors=0;
 let _iosWatchdogTimer=null;
 const IS_ANDROID=/Android/i.test(navigator.userAgent);
@@ -14154,7 +14184,6 @@ function buildRecog(){
         return;
       }
       _srBuffer=(_srBuffer+' '+final).trim();
-      if(_iosVoiceMode){clearTimeout(speechTimer);speechTimer=null;}
       const heardEl=document.getElementById('vdbg-heard');
       if(heardEl)heardEl.textContent=_srBuffer;
       vdbgLog('FINAL:['+final.trim()+'] BUF:['+_srBuffer+']','#fff');
@@ -14289,7 +14318,7 @@ function buildRecog(){
         vsTxt.textContent='Sending: '+normalised.slice(0,50);
         vdbgLog('>>> SEND: ['+normalised+']','var(--c)');
         handleInput();
-      },_iosVoiceMode?800:_timerDelay);
+      },3000);
     }
   };
 
@@ -14305,18 +14334,18 @@ function buildRecog(){
     // iOS-specific: 'aborted','network','audio-capture' mean AVAudioSession is stale
     // Force a full recog rebuild rather than just restart -- prevents the 2min hang
     if(IS_IOS&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture')){
-      vdbgLog('iOS SR error '+e.error,'var(--a)');
-      recog=null;
+      vdbgLog('iOS SR error '+e.error+' -- full rebuild','var(--a)');
+      recog=null; // force buildRecog() to create fresh instance
       _iosSrErrors=((_iosSrErrors||0)+1);
-      // Short flat backoff — don't wait 8s, just 300ms max
-      const backoff=Math.min(300*_iosSrErrors,900);
+      // Exponential backoff after repeated errors to let AVAudioSession recover
+      const backoff=Math.min(500*Math.pow(1.5,_iosSrErrors),8000);
       setTimeout(()=>{
         if(micState!=='off'&&!_speakBusy){_iosSrErrors=0;safeStart();}
       },backoff);
       return;
     }
     _iosSrErrors=0;
-    setTimeout(()=>safeStart(),IS_IOS?800:1200);
+    setTimeout(()=>safeStart(),IS_IOS?2500:1200);
   };
 
   r.onend=()=>{
@@ -14325,25 +14354,8 @@ function buildRecog(){
     if(!voiceMode)vsBar.style.display='none';
     vdbgLog('END buf:['+(_srBuffer||'').slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
     if(micState==='query'&&!_srPausedForTTS){
-      // iOS: if we have buffered speech, send it now instead of losing it on restart
-      if(_iosVoiceMode&&_srBuffer&&_srBuffer.trim().length>1){
-        vdbgLog('iOS onend: firing buf='+_srBuffer.slice(0,30),'var(--g)');
-        clearTimeout(speechTimer);
-        const _toSend=_srBuffer.trim();
-        _srBuffer='';speechTimer=null;
-        const _raw=normaliseVoiceInput(_toSend);
-        const _norm=normalizeSpeech(_raw);
-        if(_norm&&_norm.length>1){
-          removeLiveBubble();
-          ciEl.value=_norm;
-          ciEl.style.height='auto';
-          ciEl.style.height=Math.min(ciEl.scrollHeight,120)+'px';
-          vsTxt.textContent='Sending: '+_norm.slice(0,50);
-          vdbgLog('iOS >>> SEND: '+_norm,'var(--c)');
-          handleInput();
-        }
-      }
-      const delay=_iosVoiceMode?600:150;
+      // Restart to catch next utterance -- buffer preserved at module level
+      const delay=IS_IOS?450:150;
       setTimeout(()=>{ if(micState==='query'&&!recogBusy&&!_srPausedForTTS)safeStart(); },delay);
     }
   };
@@ -14665,13 +14677,6 @@ function safeStart(){
   }
 }
 
-function _initIOSBtn(){
-  const btn=document.getElementById('mbtn-ios');if(!btn)return;
-  btn.textContent=_iosVoiceMode?'📱 IOS':'🤖 AND';
-  btn.style.color=_iosVoiceMode?'var(--g)':'var(--t2)';
-  btn.style.borderColor=_iosVoiceMode?'var(--g)':'rgba(0,212,255,.3)';
-}
-function toggleIOSMode(){_iosVoiceMode=!_iosVoiceMode;_initIOSBtn();}
 function toggleMic(){
   if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
   if(!SR){harveyMsg('Voice input is not supported on this browser, sir. Please try Chrome on Android or Safari on iOS 14.5 or later.');return;}
@@ -14911,7 +14916,6 @@ function mobSearch(){
 
 
 window.addEventListener('load',async()=>{
-  _initIOSBtn();
   setTimeout(()=>{
     document.getElementById('welcome')?.remove();
     const boot=document.createElement('div');boot.className='msg-ai';
