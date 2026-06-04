@@ -13795,12 +13795,10 @@ function _toggleIosWhisper(){
   _initIosWhisperBtn();
   if(_iosWhisperMode){
     try{recog?.abort();}catch(e){}recogBusy=false;
-    harveyMsg('iOS voice mode <strong>ON</strong>, sir. Tap mic — I detect when you stop speaking automatically.');
-    speak('iOS voice mode on, sir.');
+    harveyMsg('iOS whisper mode <strong>ON</strong>, sir. Tap the mic button to start — I will auto-detect when you finish speaking.');
   } else {
     _iosWStopSession();
-    harveyMsg('iOS voice mode <strong>OFF</strong>, sir. Standard voice recognition active.');
-    speak('iOS voice mode off, sir.');
+    harveyMsg('iOS whisper mode <strong>OFF</strong>, sir.');
   }
 }
 function _initIosWhisperBtn(){
@@ -13836,10 +13834,15 @@ async function _iosWOpenStream(){
 
 async function _iosWStartSession(){
   if(_iosWActive||_iosWProcessing)return;
+  // Load model first — show progress
+  if(vsTxt)vsTxt.textContent='IOS WHISPER — LOADING...';
   const ok1=await _iosWEnsureModel();if(!ok1)return;
   const ok2=await _iosWOpenStream();if(!ok2)return;
   _iosWActive=true;
   micState='query';
+  voiceMode=true;  // mark voice active so vsBar shows
+  vsBar.style.display='flex';
+  vmBadge.classList.add('active');
   if(mbEl)mbEl.classList.add('active');
   if(vsTxt)vsTxt.textContent='IOS WHISPER — LISTENING...';
   _iosWListenLoop();
@@ -13853,8 +13856,11 @@ function _iosWStopSession(){
   if(_iosWCtx){try{_iosWCtx.close();}catch(e){}}_iosWCtx=null;_iosWAnalyser=null;
   if(_iosWStream){_iosWStream.getTracks().forEach(t=>t.stop());_iosWStream=null;}
   if(mbEl)mbEl.classList.remove('active');
+  voiceMode=false;
+  vmBadge.classList.remove('active');
+  vsBar.style.display='none';
   micState='off';
-  if(vsTxt&&!_iosWProcessing)vsTxt.textContent='IOS WHISPER — TAP MIC';
+  if(vsTxt&&!_iosWProcessing)vsTxt.textContent='IOS WHISPER — TAP MIC TO START';
 }
 
 async function _iosWListenLoop(){
@@ -13862,13 +13868,13 @@ async function _iosWListenLoop(){
   if(!_iosWStream||!_iosWStream.active){
     const ok=await _iosWOpenStream();if(!ok){_iosWActive=false;return;}
   }
-  // Wait while Harvey is speaking
+  // Wait while Harvey is speaking — poll until clear
   if(_speakBusy||_srPausedForTTS){
-    if(vsTxt)vsTxt.textContent='IOS WHISPER — WAITING...';
-    _iosWVADTimer=setTimeout(()=>_iosWListenLoop(),400);
+    if(vsTxt)vsTxt.textContent='HARVEY SPEAKING...';
+    _iosWVADTimer=setTimeout(()=>_iosWListenLoop(),300);
     return;
   }
-  if(vsTxt)vsTxt.textContent='IOS WHISPER — LISTENING...';
+  if(vsTxt)vsTxt.textContent='LISTENING... (speak now)';
   _iosWChunks=[];
   _iosWRecording=true;
   // Set up VAD analyser
@@ -13888,7 +13894,7 @@ async function _iosWListenLoop(){
   _iosWMediaRec.start(100);
   // VAD poll
   let _spDetected=false,_silStart=0;
-  const _THRESH=0.012,_SIL_MS=1400,_MAX_MS=12000,_MIN_MS=400;
+  const _THRESH=0.010,_SIL_MS=2000,_MAX_MS=15000,_MIN_MS=300;
   const _t0=Date.now();
   const _poll=setInterval(()=>{
     if(!_iosWRecording||!_iosWActive){clearInterval(_poll);return;}
@@ -13902,11 +13908,11 @@ async function _iosWListenLoop(){
     }
     if(rms>_THRESH){
       _spDetected=true;_silStart=0;
-      if(vsTxt)vsTxt.textContent='IOS WHISPER — SPEAKING...';
+      if(vsTxt)vsTxt.textContent='SPEAKING...';
     } else if(_spDetected&&elapsed>_MIN_MS){
       if(!_silStart)_silStart=Date.now();
       const silDur=Date.now()-_silStart;
-      if(vsTxt)vsTxt.textContent='IOS WHISPER — '+(Math.round(silDur/_SIL_MS*100))+'%...';
+      if(vsTxt)vsTxt.textContent='PAUSE DETECTED — SENDING...';
       if(silDur>=_SIL_MS){clearInterval(_poll);_iosWSendUtterance();return;}
     }
     if(elapsed>=_MAX_MS){clearInterval(_poll);if(_spDetected)_iosWSendUtterance();else _iosWListenLoop();}
@@ -13916,7 +13922,7 @@ async function _iosWListenLoop(){
 async function _iosWSendUtterance(){
   if(!_iosWRecording)return;
   _iosWRecording=false;_iosWProcessing=true;
-  if(vsTxt)vsTxt.textContent='IOS WHISPER — PROCESSING...';
+  if(vsTxt)vsTxt.textContent='PROCESSING...';
   if(mbEl)mbEl.classList.remove('active');
   await new Promise(res=>{
     if(!_iosWMediaRec||_iosWMediaRec.state==='inactive'){res();return;}
@@ -13934,9 +13940,8 @@ async function _iosWSendUtterance(){
           const final=normalizeSpeech(norm);
           if(isSilenceTTS(norm)){
             stopSpeech();
-          } else if(isDeactivationPhrase(norm)){
-            _iosWStopSession();deactivateVoiceMode(false);
-            _iosWhisperMode=false;_initIosWhisperBtn();
+          } else if(isDeactivationPhrase(norm)||/^(stop mic|mic off|stop whisper|whisper off|stop recording)$/i.test(norm.trim())){
+            _iosWStopSession();
             _iosWProcessing=false;return;
           } else {
             ciEl.value=final;
@@ -13948,7 +13953,11 @@ async function _iosWSendUtterance(){
     }
   }catch(e){if(vsTxt)vsTxt.textContent='IOS WHISPER — error, retrying...';}
   _iosWProcessing=false;
-  setTimeout(()=>{if(_iosWActive&&_iosWhisperMode&&!_iosWProcessing)_iosWListenLoop();},600);
+  // Restart listen loop immediately if Harvey isn't speaking yet
+  // If Harvey starts speaking, _iosWListenLoop will wait internally
+  if(_iosWActive&&_iosWhisperMode){
+    _iosWListenLoop();
+  }
 }
 
 async function initWhisperMode(){
@@ -15037,8 +15046,15 @@ function safeStart(){
 
 function toggleMic(){
   if(_iosWhisperMode){
-    if(_iosWActive){_iosWStopSession();}
-    else{_iosWStartSession();}
+    if(_iosWActive||_iosWProcessing){
+      // Tap while active/processing = stop
+      _iosWStopSession();
+      _iosWProcessing=false;
+      if(vsTxt)vsTxt.textContent='IOS WHISPER — TAP MIC TO START';
+    } else {
+      // Tap while idle = start listening session
+      _iosWStartSession();
+    }
     return;
   }
   if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
