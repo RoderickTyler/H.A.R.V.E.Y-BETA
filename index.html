@@ -688,6 +688,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
               <button class="mode-btn" id="mbtn-standby" onclick="_activateStandby()" title="Standby mode">💤 STANDBY</button>
               <button class="mode-btn" id="mbtn-normal" onclick="_activateNormal()" title="Normal mode — resume">▶ NORMAL</button>
               <button class="mode-btn" id="mbtn-reload" onclick="location.reload(true)" title="Hard reload — fresh start">↺ RELOAD</button>
+              <button class="mode-btn" id="mbtn-ios" onclick="_toggleIosMode()" title="iOS voice mode — tap to toggle">📱 IOS</button>
             </span>
           </div>
         </div>
@@ -804,6 +805,7 @@ const VOICE_SPEED         = _IS_ANDROID_PHONE ? 2.0  : _IS_IOS_UA ? 1.1  : 1.3;
 const VOICE_PITCH_DEFAULT = _IS_ANDROID_PHONE ? 0.45 : _IS_IOS_UA ? 0.6  : 0.55;
 let _voiceSpeed = VOICE_SPEED;
 let _voicePitch = VOICE_PITCH_DEFAULT;
+let _iosMode = _IS_IOS_UA; // iOS SR mode: ON for iOS, OFF for Android/desktop
 
 let currentAudio = null;
 let harveyVoice  = null;
@@ -1016,11 +1018,16 @@ function speakNext(){
       _harveyCurrentSpeech=clean.toLowerCase().slice(0,60);
       _harveySpeechFull=clean.toLowerCase(); // full text for similarity check
       if(vsTxt&&(voiceMode||micState==='query'))vsTxt.textContent='HARVEY SPEAKING...';
-      // Keep SR alive during Harvey TTS -- flag it so onresult only processes stop/clear/cut
-      // This lets "stop stop" / "cut cut" get through even while Harvey is speaking
       _srPausedForTTS=true;
-      // Do NOT abort SR -- leave running to catch user interrupt commands
-      vdbgLog('SR stop-only mode (Harvey TTS)','var(--a)');
+      if(_iosMode){
+        // iOS mode: abort SR to free AVAudioSession for TTS
+        if(recog){try{recog.abort();}catch(e){}}
+        recogBusy=false;
+        vdbgLog('iOS mode: SR aborted for TTS','var(--a)');
+      } else {
+        // Standard: keep SR alive in stop-only mode
+        vdbgLog('SR stop-only mode (Harvey TTS)','var(--a)');
+      }
       // Whisper: pause MediaRecorder
       if(_whisperMode&&_mediaRecorder&&_mediaRecorder.state==='recording'){
         try{_mediaRecorder.pause();}catch(e){}
@@ -1039,19 +1046,40 @@ function speakNext(){
       if(_srPausedForTTS){
         _srPausedForTTS=false;
         if(micState==='query'||voiceMode){
-          // Keep echo guard active for 1.5s after TTS ends, then reopen mic
-          const _decayMs=IS_IOS?1200:700;
-          setTimeout(()=>{
-            if(!_speakBusy){
-              // Echo guard stays on for 1.5s from TTS end
+          if(_iosMode){
+            // iOS mode: TTS released audio session — wait for AVAudioSession to settle
+            // then do a clean fresh-instance rebuild with watchdog
+            setTimeout(()=>{
+              if(_speakBusy)return;
               window._echoGuardUntil=Date.now()+1500;
-              if(!recogBusy&&(micState==='query'||voiceMode)){
+              recog=null; recogBusy=false;
+              if(micState==='query'||voiceMode){
                 if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
                 safeStart();
-                vdbgLog('SR restarted (echo decay done)','var(--g)');
+                vdbgLog('iOS mode: SR fresh restart after TTS','var(--g)');
+                // Watchdog: retry if SR still not running after 2.5s
+                setTimeout(()=>{
+                  if(!recogBusy&&!_speakBusy&&(micState==='query'||voiceMode)){
+                    vdbgLog('iOS mode watchdog: retrying SR','var(--a)');
+                    recog=null;recogBusy=false;safeStart();
+                  }
+                },2500);
               }
-            }
-          },_decayMs);
+            },900);
+          } else {
+            // Standard strategy (Android / desktop / non-iOS-mode)
+            const _decayMs=IS_IOS?1200:700;
+            setTimeout(()=>{
+              if(!_speakBusy){
+                window._echoGuardUntil=Date.now()+1500;
+                if(!recogBusy&&(micState==='query'||voiceMode)){
+                  if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
+                  safeStart();
+                  vdbgLog('SR restarted (echo decay done)','var(--g)');
+                }
+              }
+            },_decayMs);
+          }
         }
       }
       // Whisper: resume MediaRecorder
@@ -3471,20 +3499,14 @@ function buildEvExpansionPanel(params){
     </label>`).join('')}
   </div>`:''}
 
-  <div style="font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;margin:10px 0 4px">── EXTEND DATE RANGE ── <em style="color:var(--a)">(backdated — use with caution)</em></div>
+  <div style="font-family:var(--mono);font-size:8px;color:var(--t3);letter-spacing:1px;margin:10px 0 4px">── EXTEND DATE RANGE ──</div>
   <div style="display:flex;flex-wrap:wrap;gap:6px">
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
-      <input type="radio" name="${fid}-yr" value="2" style="accent-color:var(--a)"> <span style="color:var(--a)">2 YRS <em>(backdated)</em></span>
+      <input type="radio" name="${fid}-yr" value="2" style="accent-color:var(--a)"> <span style="color:var(--a)">2 YRS BACKDATED</span>
     </label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
-      <input type="radio" name="${fid}-yr" value="3" style="accent-color:var(--a)"> <span style="color:var(--a)">3 YRS <em>(backdated)</em></span>
-    </label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
-      <input type="radio" name="${fid}-yr" value="4" style="accent-color:var(--r)"> <span style="color:var(--r)">4 YRS <em>(backdated)</em></span>
-    </label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-family:var(--mono);font-size:9px;color:var(--t2)">
-      <input type="radio" name="${fid}-yr" value="5" style="accent-color:var(--r)"> <span style="color:var(--r)">5 YRS <em>(backdated)</em></span>
-    </label>
+  </div>
+  <div style="font-family:var(--mono);font-size:9px;color:var(--r);margin-top:6px;padding:5px 8px;background:rgba(255,60,60,.07);border-left:2px solid var(--r)">
+    ⚠ WARNING — 2 year backdated data has been used. Pricing may be inaccurate or severely off market sentiment.
   </div>
 
   <div class="hud-divider" style="margin-top:10px"></div>
@@ -3520,6 +3542,10 @@ function evxSubmit(fid){
 async function runEvExpanded(p,labels){
   loading=true;sbEl.disabled=true;
   speak('Running expanded search, sir. Stand by.');
+  if(p._years&&p._years>=2){
+    await new Promise(r=>setTimeout(r,100));
+    harveyMsg(`<div style="font-family:var(--mono);font-size:9px;color:var(--r);padding:6px 8px;background:rgba(255,60,60,.07);border-left:2px solid var(--r)">⚠ WARNING — 2 year backdated data has been used. Pricing may be inaccurate or severely off market sentiment.</div>`);
+  }
   thinkingMsg();
   await new Promise(r=>setTimeout(r,300));
 
@@ -4073,6 +4099,16 @@ function showEV(result,params){
     ${warn12?`<div class="ev-warn">⚠ Based on last 12 months — not enough recent data. Treat as directional.<br><a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat for a more accurate valuation →</a></div>`:''}
     ${sizeDisclaimer}
     ${floorDisclaimer}
+    ${(()=>{
+      if(!params._floorAnomaly) return '';
+      if(params._floorAnomaly==='high')
+        return `<div class="ev-warn" style="margin-bottom:10px;border-color:rgba(255,80,80,.5);background:rgba(255,80,80,.06)">
+          ⚠ <strong>Floor ${params._floorAnomalyInput} does not exist</strong> — Block ${params.block} ${params.street} has a maximum of <strong>${params._floorAnomalyMax} floors</strong>. Estimate applied at highest tier <strong>${params._floorAnomalyTier}</strong> for reference only.
+        </div>`;
+      return `<div class="ev-warn" style="margin-bottom:10px;border-color:rgba(255,80,80,.5);background:rgba(255,80,80,.06)">
+        ⚠ <strong>Floor ${params._floorAnomalyInput} is invalid</strong> — estimate applied at lowest tier <strong>${params._floorAnomalyTier}</strong> for reference only.
+      </div>`;
+    })()}
 
     <div style="font-family:var(--mono);font-size:9px;color:var(--t2);letter-spacing:1px;margin-bottom:12px">
       ${esc(result.flatType)} · FLOOR ${result.floor}${floorNote} · ${result.size}SQM${sizeNote} · ${esc(result.town)}${fallNote}
@@ -4125,8 +4161,21 @@ function showEV(result,params){
 
   function _speakMoney(n){
     const v=Math.round(Number(n));
-    if(v>=1000000){const m=(v/1000000);return (m===Math.round(m)?m.toFixed(0):m.toFixed(2).replace(/\.?0+$/,''))+' million';}
-    if(v>=1000) return Math.round(v/1000)+'k';
+    if(v>=1000000){
+      const mils=Math.floor(v/1000000);
+      const rem=v%1000000;
+      const ks=Math.round(rem/1000);
+      let s=mils===1?'one million':(mils+' million');
+      if(ks>0) s+=' '+(ks+' thousand');
+      return s;
+    }
+    if(v>=1000){
+      const ks=Math.floor(v/1000);
+      const rem=v%1000;
+      let s=ks+' thousand';
+      if(rem>0) s+=' '+rem;
+      return s;
+    }
     return _priceSpoken(v);
   }
   const _spFt=(result.flatType||'').replace(/-/g,' ').replace(/ROOM/i,'room').toLowerCase();
@@ -4134,7 +4183,8 @@ function showEV(result,params){
   const _spTown=result.town?', '+cleanForSpeech(result.town):'';
   if(_shortMode){
     // Short mode: price first, then location and flat type only
-    const _evShort=`${_speakMoney(result.adjusted)}, ${_spStreet}, Block ${result.block}, ${_spFt}.`;
+    const _anomalyNote=params._floorAnomaly==='high'?` Floor ${params._floorAnomalyInput} exceeds maximum. Applied highest tier.`:params._floorAnomaly==='low'?` Floor ${params._floorAnomalyInput} is invalid. Applied lowest tier.`:'';
+    const _evShort=`${_speakMoney(result.adjusted)}, ${_spStreet}, Block ${result.block}, ${_spFt}.${_anomalyNote}`;
     speak(_evShort,true);
   } else {
     let _speech=`Block ${result.block}, ${_spStreet}${_spTown}. ${_spFt}, floor ${result.floor}, ${result.size} square metres. `;
@@ -4562,6 +4612,23 @@ async function runEV(){
       ctx.floor=typeof mid==='number'?mid:parseInt(mid)||6;
     }else{ctx.floor=6;}
     ctx.floorInferred=true;
+  }
+  if(ctx.floor && ctx.block && ctx.street){
+    const _fvRun=_validateFloor(ctx.floor,String(ctx.block).toUpperCase(),ctx.street);
+    const _fNum=parseInt(ctx.floor);
+    if(_fvRun.max && !_fvRun.valid){
+      if(_fNum<1){
+        const _tiersLo=_getStoreyTiersAll(String(ctx.block).toUpperCase(),ctx.street);
+        const _loTier=_tiersLo[0]||'01 TO 03';
+        ctx.floor=storeyRangeMid(_loTier)||2;
+        ctx._floorAnomaly='low';ctx._floorAnomalyInput=_fNum;ctx._floorAnomalyTier=_loTier;ctx._floorAnomalyMax=_fvRun.max;
+      } else {
+        const _tiersHi=_getStoreyTiersAll(String(ctx.block).toUpperCase(),ctx.street);
+        const _hiTier=_tiersHi[_tiersHi.length-1]||((_fvRun.max-2)+' TO '+_fvRun.max);
+        ctx.floor=storeyRangeMid(_hiTier)||(_fvRun.max-1);
+        ctx._floorAnomaly='high';ctx._floorAnomalyInput=_fNum;ctx._floorAnomalyTier=_hiTier;ctx._floorAnomalyMax=_fvRun.max;
+      }
+    }
   }
   speak(rand(['Stand by, sir.','Computing estimate, sir.','Accessing records, sir.']));
   thinkingMsg();await new Promise(r=>setTimeout(r,300));
@@ -5642,6 +5709,25 @@ async function _handleInputInner(raw){
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
+  if(raw.startsWith('__voice__')||/^voice\s+(speed|pitch|rate|reset)/i.test(raw.trim())){
+    const _vp={};
+    if(raw.startsWith('__voice__')){raw.split('|').slice(1).forEach(p=>{const eq=p.indexOf(':');if(eq>0)_vp[p.slice(0,eq).trim()]=p.slice(eq+1).trim();});}
+    else{const _ms=raw.match(/voice\s+(?:speed|rate)\s+([\d.]+)/i);const _mp=raw.match(/voice\s+pitch\s+([\d.]+)/i);if(_ms)_vp.speed=_ms[1];if(_mp)_vp.pitch=_mp[1];if(/voice\s+reset/i.test(raw))_vp.reset='1';}
+    if(_vp.reset){_voiceSpeed=VOICE_SPEED;_voicePitch=VOICE_PITCH_DEFAULT;}
+    if(_vp.speed)_voiceSpeed=Math.min(2.5,Math.max(0.5,parseFloat(_vp.speed)||VOICE_SPEED));
+    if(_vp.pitch)_voicePitch=Math.min(2.0,Math.max(0.0,parseFloat(_vp.pitch)||VOICE_PITCH_DEFAULT));
+    const _dev=_IS_ANDROID_PHONE?'Android':_IS_IOS_UA?'iOS':'Desktop';
+    harveyMsg(`Voice tuned, sir. Speed <strong>${_voiceSpeed.toFixed(2)}</strong> · Pitch <strong>${_voicePitch.toFixed(2)}</strong> · ${_dev}`,[
+      {label:'▲ SPEED',val:`__voice__|speed:${(_voiceSpeed+0.1).toFixed(2)}`},
+      {label:'▼ SPEED',val:`__voice__|speed:${(_voiceSpeed-0.1).toFixed(2)}`},
+      {label:'▲ PITCH',val:`__voice__|pitch:${(_voicePitch+0.05).toFixed(2)}`},
+      {label:'▼ PITCH',val:`__voice__|pitch:${(_voicePitch-0.05).toFixed(2)}`},
+      {label:'↺ RESET',val:'__voice__|reset:1'},
+    ]);
+    speak(`Speed ${_voiceSpeed.toFixed(1)}, pitch ${_voicePitch.toFixed(2)}.`);
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
   if(raw==='__onemap_school__'){
     window.open('https://www.onemap.gov.sg/school','_blank');
     harveyMsg(`Opening OneMap School Catchment tool, sir — draw the 1km radius around ${convCtx.town||'the school'} to find the exact eligible streets. Once you have the street name, come back and I will pull the transaction data for you.`,[{label:'SEARCH BY TOWN',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
@@ -6111,6 +6197,30 @@ async function _handleInputInner(raw){
   }
 
   if(mode==='ev_waiting'||mode==='srch_waiting'){
+
+    // ── EV CARD: bare street or town typed → treat as EV field fill ──
+    if(mode==='ev_waiting' && !parsed.street && !parsed.town){
+      const _evRaw=raw.trim();
+      const _evSkip=/^\d+|^(yes|no|yep|nope|ok|cancel|stop|search|continue|floor|block|blk|level|room|type|size|sqm)/i.test(_evRaw)
+        || /^(estimate|valuat|search|resale|highest|lowest)/i.test(_evRaw);
+      if(!_evSkip && _evRaw.length > 2){
+        const _evStrRes = reverseStreet(_evRaw);
+        if(_evStrRes && _evStrRes.street){
+          parsed.street = _evStrRes.street;
+          if(_evStrRes.town && !parsed.town) parsed.town = _evStrRes.town;
+        } else {
+          const _evUpper = _evRaw.toUpperCase();
+          const _evDirectMatch = DB.loaded && DB.resale.some(r=>r.street_name===_evUpper);
+          if(_evDirectMatch){
+            parsed.street = _evUpper;
+          } else {
+            const _evTownMatch = DB.loaded && ([...new Set(DB.resale.map(r=>r.town))]).find(t=>t&&t.toLowerCase()===_evRaw.toLowerCase());
+            if(_evTownMatch) parsed.town = _evTownMatch;
+          }
+        }
+      }
+    }
+
     const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
     const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice;
 
@@ -7564,6 +7674,58 @@ async function _handleInputInner(raw){
             workingCtx.lastQuestion=null;
             ciEl.value=_ftMatch.val;
             await _handleInputInner(_ftMatch.val);return;
+          }
+        }
+
+        // ── EV follow-up: "expand to street" / "expand 2 years" after recent EV ──
+        {
+          const _evCtxX=workingCtx._lastEVCtx;
+          const _evFreshX=_evCtxX&&(Date.now()-_evCtxX.ts)<180000;
+          const _isExpandStreetX=/^(expand\s+(to\s+)?street|whole\s+street|all\s+(of\s+)?(the\s+)?street|full\s+street|street\s+level|use\s+(the\s+)?whole\s+street|use\s+street)/i.test(raw.trim());
+          const _isExpand2yrX=/^(expand\s+)?2\s*years?$|^two\s*years?$|^expand\s+two\s*years?$|^24\s*months?$/i.test(raw.trim());
+          const _notOverrideX=!/\b(search|highest|lowest|recent|price range|analysis|how many|most expensive|cheapest)\b/i.test(raw);
+          if(_evFreshX && _notOverrideX && (_isExpandStreetX||_isExpand2yrX) && _evCtxX.street){
+            const _expCtxX={...ctx,
+              street:_evCtxX.street,town:_evCtxX.town||ctx.town,
+              block:_evCtxX.block||ctx.block,flatType:_evCtxX.flatType||ctx.flatType,
+              _expanded:true,_sameStreet:_isExpandStreetX,_nearbyStreets:[],
+              _years:_isExpand2yrX?2:0
+            };
+            const _expLabelsX=[];
+            if(_isExpandStreetX) _expLabelsX.push('ALL BLOCKS ON STREET');
+            if(_isExpand2yrX) _expLabelsX.push('2-YEAR BACKDATED');
+            vdbgLog('EV expand: '+_expLabelsX.join('+'),'var(--a)');
+            userMsg('Expand: '+_expLabelsX.join(' + '));
+            runEvExpanded(_expCtxX,_expLabelsX);
+            return;
+          }
+        }
+
+        // ── EV FOLLOW-UP: floor/block typed after recent EV result ──
+        {
+          const _evCtxF=workingCtx._lastEVCtx;
+          const _evFresh=_evCtxF&&(Date.now()-_evCtxF.ts)<180000;
+          const _isFloorOnly=/^(?:floor|level|storey|lvl|flr)\s*\d+\s*(?:st|nd|rd|th)?$/i.test(raw.trim())
+            || /^\d+\s*(?:st|nd|rd|th)?$/.test(raw.trim());
+          const _isBlockFloor=/(?:block|blk)\s*\d+[a-z]?\s+(?:level|floor|storey|lvl|flr)\s*\d+/i.test(raw);
+          const _notOverride=!/\b(search|highest|lowest|recent|price range|analysis|how many|most expensive|cheapest)\b/i.test(raw);
+          if(_evFresh && _notOverride && (_isFloorOnly||_isBlockFloor)){
+            const _efBlock=(()=>{
+              const _bm=raw.match(/(?:block|blk)\s*(\d+[a-z]?)/i);
+              return _bm?_bm[1].toUpperCase():(_evCtxF.block||null);
+            })();
+            const _efFloor=(()=>{
+              const _fm=raw.match(/(?:floor|level|storey|lvl|flr)?\s*(\d+)\s*(?:st|nd|rd|th)?/i);
+              return _fm?parseInt(_fm[1]):null;
+            })();
+            if(_efFloor!==null && _efBlock && _evCtxF.street){
+              vdbgLog('EV follow-up: block '+_efBlock+' floor '+_efFloor+' on '+_evCtxF.street,'var(--c)');
+              const _synCmd='estimate value block '+_efBlock+' '+_evCtxF.street
+                +(_evCtxF.flatType?' '+_evCtxF.flatType:'')+' floor '+_efFloor;
+              ciEl.value=_synCmd;
+              await _handleInputInner(_synCmd);
+              return;
+            }
           }
         }
 
@@ -14033,6 +14195,71 @@ s=s.replace(/\btavon\b/gi,'teban');             // STT: tavon → teban
   // Collapse multiple spaces
   s=s.replace(/\s+/g,' ');
 
+
+  // ══ HARVEY_HEARS_STREET phonetic aliases ══
+  s=s.replace(/\bbottl?e\b/gi,'bedok');s=s.replace(/\bbattl?e\b/gi,'bedok');s=s.replace(/\bbutt?er\b/gi,'bedok');
+  s=s.replace(/\bbut\s+i\s+wrote\b/gi,'bedok');s=s.replace(/\bbut\s+don'?t\b/gi,'bedok');
+  s=s.replace(/\b(battl?e|bottl?e|butt?er|but\s+don'?t)\s+self\b/gi,'bedok south');
+  s=s.replace(/\bgentlemen\b/gi,'cantonment');s=s.replace(/\bcandyman\b/gi,'cantonment');
+  s=s.replace(/\bcan\s+bowman\b/gi,'cantonment');s=s.replace(/\bcan\s+someone\b/gi,'cantonment');
+  s=s.replace(/\btai\s+chi\b/gi,'chai chee');s=s.replace(/\bchai\s+chi\b/gi,'chai chee');
+  s=s.replace(/\btighty\b/gi,'chai chee');s=s.replace(/\bchai\s+tea\b/gi,'chai chee');
+  s=s.replace(/\bfunny\s+village\b/gi,'changi village');
+  s=s.replace(/\bthat\s+avenue\b/gi,'delta avenue');
+  s=s.replace(/\bnovera\b/gi,'dover');s=s.replace(/\bnova\s+road\b/gi,'dover road');s=s.replace(/\bnova\b/gi,'dover');
+  s=s.replace(/\bdouble\s+road\b/gi,'dover road');s=s.replace(/\bdouble\b/gi,'dover');
+  s=s.replace(/\byou\s+knows?\s+cres(ent)?\b/gi,'eunos crescent');
+  s=s.replace(/\byou\s+knows?\b/gi,'eunos');s=s.replace(/\byou\s+know\b/gi,'eunos');
+  s=s.replace(/\bever\s+done\s+park\b/gi,'everton park');s=s.replace(/\bever\s+done\b/gi,'everton');
+  s=s.replace(/\bgeylang\s+sarai\b/gi,'geylang serai');s=s.replace(/\bget\s+alongside\b/gi,'geylang serai');
+  s=s.replace(/\bno\s+g[im][io]\b/gi,'ghim moh');s=s.replace(/\bkimora\b/gi,'ghim moh');
+  s=s.replace(/\bkimono\b/gi,'ghim moh');s=s.replace(/\bgilmore\b/gi,'ghim moh');s=s.replace(/\bkimo\b/gi,'ghim moh');
+  s=s.replace(/\bmemorial(\s+road)?\b/gi,'ghim moh$1');s=s.replace(/\btomorrow(\s+road)?\b/gi,'ghim moh$1');
+  s=s.replace(/\bchemo(\s+road)?\b/gi,'ghim moh$1');s=s.replace(/\bkemo(\s+road)?\b/gi,'ghim moh$1');
+  s=s.replace(/\bdemo(\s+road)?\b/gi,'ghim moh$1');s=s.replace(/\bemo(\s+road)?\b/gi,'ghim moh$1');
+  s=s.replace(/\bheight\s+road\b/gi,'haig road');s=s.replace(/\bhike\s+road\b/gi,'haig road');
+  s=s.replace(/\bhate\s+(wrote|road)\b/gi,'haig road');s=s.replace(/\bhick\s+road\b/gi,'haig road');
+  s=s.replace(/\bhey\s+road\b/gi,'haig road');s=s.replace(/\b(heck|hack)\s+hickory\b/gi,'haig road');
+  s=s.replace(/\bhickory\b/gi,'haig road');
+  s=s.replace(/\borlando\b/gi,'holland close');s=s.replace(/\bholland\s+rose\b/gi,'holland close');
+  s=s.replace(/\bhauling\s+clothes\b/gi,'holland close');s=s.replace(/\bisland\s+close\b/gi,'holland close');
+  s=s.replace(/\bhow\s+can\s+i\s+get\s+a\s+new\s+tree\b/gi,'hougang avenue 3');
+  s=s.replace(/\bhougang\s+avenue\s+(tree|free)\b/gi,'hougang avenue 3');
+  s=s.replace(/\bhow\s+come\b/gi,'hougang');s=s.replace(/\bhong\s+kong\b/gi,'hougang');
+  s=s.replace(/\boutcome\b/gi,'hougang');s=s.replace(/\bi'?ll\s+come\b/gi,'hougang');s=s.replace(/\bhogan\b/gi,'hougang');
+  s=s.replace(/\bjel?an\s+coco\b/gi,'jalan kukoh');s=s.replace(/\bjel?an\s+google\b/gi,'jalan kukoh');
+  s=s.replace(/\bgerman\s+boogie\s+merah\b/gi,'jalan bukit merah');
+  s=s.replace(/\bgermany\b/gi,'jalan bukit merah');s=s.replace(/\bgerman\b/gi,'jalan');
+  s=s.replace(/\bjalan\s+boogie\s+merah\b/gi,'jalan bukit merah');
+  s=s.replace(/\bjalan\s+buki?mera\b/gi,'jalan bukit merah');
+  s=s.replace(/\bjalan\s+bookimera\b/gi,'jalan bukit merah');
+  s=s.replace(/\bjalan\s+book\s+it\s+mera\b/gi,'jalan bukit merah');
+  s=s.replace(/\bgeorgia\s+road\b/gi,'joo chiat road');s=s.replace(/\bto\s+chat\s+road\b/gi,'joo chiat road');
+  s=s.replace(/\bdo\s+chat\s+road\b/gi,'joo chiat road');s=s.replace(/\bto\s+chad\s+road\b/gi,'joo chiat road');
+  s=s.replace(/\b2\s+chainz\s+road\b/gi,'joo chiat road');s=s.replace(/\bdoing\s+check\s+rule\b/gi,'joo chiat road');
+  s=s.replace(/\btool\s+chat\s+room\b/gi,'joo chiat road');s=s.replace(/\bgeorgia\b/gi,'joo chiat');
+  s=s.replace(/\bjujit\b/gi,'joo chiat');s=s.replace(/\bjuche\b/gi,'joo chiat');
+  s=s.replace(/\byou\s+change\b/gi,'joo chiat');s=s.replace(/\byour\s+chain\b/gi,'joo chiat');
+  s=s.replace(/\bdo\s+ch?e?ck\b/gi,'joo chiat');s=s.replace(/\bdo\s+chat\b/gi,'joo chiat');
+  s=s.replace(/\bto\s+chat\b/gi,'joo chiat');s=s.replace(/\bto\s+chad\b/gi,'joo chiat');
+  s=s.replace(/\b2\s+chainz\b/gi,'joo chiat');
+  s=s.replace(/\bcamp\s+bus\s+road\b/gi,'kempas road');s=s.replace(/\bcamp\s+pass\s+road\b/gi,'kempas road');
+  s=s.replace(/\bcan\s+pass?word\b/gi,'kempas road');s=s.replace(/\bkim\s+pass?word\b/gi,'kempas road');
+  s=s.replace(/\bcan\s+bus\s+road\b/gi,'kempas road');s=s.replace(/\bcombust\b/gi,'kempas');
+  s=s.replace(/\bcampus\b/gi,'kempas');s=s.replace(/\bcan\s+pass\b/gi,'kempas');
+  s=s.replace(/\bcan\s+puss\b/gi,'kempas');s=s.replace(/\bkim\s+possible\b/gi,'kempas');
+  s=s.replace(/\btampon\s+caillou\s+road\b/gi,'kampong kayu road');
+  s=s.replace(/\bkampangayou\s+road\b/gi,'kampong kayu road');
+  s=s.replace(/\blong\s+guy\s+you\s+road\b/gi,'kampong kayu road');
+  s=s.replace(/\bkampong\s+(caillou|got\s+you|get\s+you|cay\s+you)\b/gi,'kampong kayu');
+  s=s.replace(/\bcall\s+bayou\b/gi,'toa payoh');
+  s=s.replace(/\bhow\s+long\s+union\b/gi,'lor lew lian');
+  s=s.replace(/\b(long|lauren)\s+julian\b/gi,'lor lew lian');s=s.replace(/\b(long|lauren)\s+lillian\b/gi,'lor lew lian');
+  s=s.replace(/\b(long|lauren|laurence|lawrence|around)\s+7\s+toa\s+payoh\b/gi,'lorong 7 toa payoh');
+  s=s.replace(/\baround\s+(\d+)\b/gi,'lorong $1');
+  s=s.replace(/\blaurence\b/gi,'lorong');s=s.replace(/\blawrence\b/gi,'lorong');s=s.replace(/\blauren\b/gi,'lorong');
+  s=s.replace(/\blong\b/gi,'lorong');
+
   return s.trim();
 }
 
@@ -14060,8 +14287,21 @@ function buildRecog(){
   r.onresult=e=>{
     let interim='',final='';
     for(let i=e.resultIndex;i<e.results.length;i++){
-      if(e.results[i].isFinal) final+=e.results[i][0].transcript+' ';
-      else interim+=e.results[i][0].transcript;
+      if(e.results[i].isFinal){
+        // Pick highest-confidence alternative instead of always [0]
+        let _best=e.results[i][0];
+        for(let j=1;j<e.results[i].length;j++){
+          if(e.results[i][j].confidence>_best.confidence) _best=e.results[i][j];
+        }
+        final+=_best.transcript+' ';
+      } else {
+        // For interim, also pick best available alternative
+        let _bInt=e.results[i][0];
+        for(let j=1;j<e.results[i].length;j++){
+          if((e.results[i][j].confidence||0)>(_bInt.confidence||0)) _bInt=e.results[i][j];
+        }
+        interim+=_bInt.transcript;
+      }
     }
     if(!final&&!interim)return;
     if(micState!=='query')return;
@@ -14305,9 +14545,9 @@ function buildRecog(){
     if(micState==='off')return;
     // iOS-specific: 'aborted','network','audio-capture' mean AVAudioSession is stale
     // Force a full recog rebuild rather than just restart -- prevents the 2min hang
-    if(IS_IOS&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture')){
-      vdbgLog('iOS SR error '+e.error+' -- full rebuild','var(--a)');
-      recog=null; // force buildRecog() to create fresh instance
+    if(_iosMode&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture'||e.error==='no-speech')){
+      vdbgLog('iOS mode SR error '+e.error+' -- full rebuild','var(--a)');
+      recog=null;
       _iosSrErrors=((_iosSrErrors||0)+1);
       // Exponential backoff after repeated errors to let AVAudioSession recover
       const backoff=Math.min(500*Math.pow(1.5,_iosSrErrors),8000);
@@ -14326,9 +14566,13 @@ function buildRecog(){
     if(!voiceMode)vsBar.style.display='none';
     vdbgLog('END buf:['+(_srBuffer||'').slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
     if(micState==='query'&&!_srPausedForTTS){
-      // Restart to catch next utterance -- buffer preserved at module level
-      const delay=IS_IOS?450:150;
-      setTimeout(()=>{ if(micState==='query'&&!recogBusy&&!_srPausedForTTS)safeStart(); },delay);
+      const delay=_iosMode?300:IS_IOS?450:150;
+      setTimeout(()=>{
+        if(micState==='query'&&!recogBusy&&!_srPausedForTTS){
+          if(_iosMode){recog=null;}
+          safeStart();
+        }
+      },delay);
     }
   };
   return r;
@@ -14634,20 +14878,40 @@ function _startIosWatchdog(){
 function safeStart(){
   if(micState==='off'||!SR)return;
   if(recogBusy){
+    const _deadlock=_iosMode?1200:2000;
     setTimeout(()=>{
-      if(recogBusy){recogBusy=false;safeStart();}
-    },2000);
+      if(recogBusy){
+        recogBusy=false;
+        if(_iosMode){recog=null;}
+        safeStart();
+      }
+    },_deadlock);
     return;
   }
   recog=buildRecog();
   try{
     recog.start();
-
   }catch(e){
     recogBusy=false;
-    setTimeout(()=>safeStart(),IS_IOS?2500:1000);
+    if(_iosMode){recog=null;setTimeout(()=>safeStart(),800);}
+    else{setTimeout(()=>safeStart(),IS_IOS?2500:1000);}
   }
 }
+
+function _toggleIosMode(){
+  _iosMode=!_iosMode;
+  _initIosBtn();
+  harveyMsg(_iosMode?'iOS voice mode <strong>ON</strong>, sir. Optimised SR restart strategy active.':
+                     'iOS voice mode <strong>OFF</strong>, sir. Standard SR strategy active.');
+}
+function _initIosBtn(){
+  const b=document.getElementById('mbtn-ios');
+  if(!b)return;
+  b.textContent=_iosMode?'📱 IOS ON':'📱 IOS OFF';
+  b.style.color=_iosMode?'var(--a)':'var(--t3)';
+  b.style.borderColor=_iosMode?'var(--a)':'';
+}
+window.addEventListener('load',()=>{ setTimeout(_initIosBtn,300); });
 
 function toggleMic(){
   if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
