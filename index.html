@@ -688,7 +688,7 @@ tr:hover td{background:rgba(0,212,255,.03)}
               <button class="mode-btn" id="mbtn-standby" onclick="_activateStandby()" title="Standby mode">💤 STANDBY</button>
               <button class="mode-btn" id="mbtn-normal" onclick="_activateNormal()" title="Normal mode — resume">▶ NORMAL</button>
               <button class="mode-btn" id="mbtn-reload" onclick="location.reload(true)" title="Hard reload — fresh start">↺ RELOAD</button>
-              <button class="mode-btn" id="mbtn-ios" onclick="_toggleIosMode()" title="iOS voice mode — tap to toggle">📱 IOS</button>
+              <button class="mode-btn" id="mbtn-ios-whisper" onclick="_toggleIosWhisper()" title="iOS Whisper mode — auto VAD">📱 IOS</button>
             </span>
           </div>
         </div>
@@ -805,7 +805,6 @@ const VOICE_SPEED         = _IS_ANDROID_PHONE ? 2.0  : _IS_IOS_UA ? 1.1  : 1.3;
 const VOICE_PITCH_DEFAULT = _IS_ANDROID_PHONE ? 0.45 : _IS_IOS_UA ? 0.6  : 0.55;
 let _voiceSpeed = VOICE_SPEED;
 let _voicePitch = VOICE_PITCH_DEFAULT;
-let _iosMode = _IS_IOS_UA; // iOS SR mode: ON for iOS, OFF for Android/desktop
 
 let currentAudio = null;
 let harveyVoice  = null;
@@ -871,6 +870,12 @@ let _energyMonReady=false;   // true once mic stream is open
 let _harveyRecentSpeech=[];    // Last few utterances for filtering
 let _whisperMode=false,_mediaRecorder=null,_audioChunks=[],_ptbHeld=false,_whisperInitDone=false;
 let _wReady=false,_wLoading=false,_wPipeline=null,_wCBs=[];
+// ── iOS Whisper auto-VAD mode ──
+const _IS_IOS_DEV=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+let _iosWhisperMode=_IS_IOS_DEV;
+let _iosWRecording=false,_iosWProcessing=false,_iosWActive=false;
+let _iosWMediaRec=null,_iosWChunks=[],_iosWStream=null;
+let _iosWVADTimer=null,_iosWAnalyser=null,_iosWCtx=null;
 
 // ══ ENERGY MONITOR — detects user speaking over Harvey ══
 
@@ -1018,16 +1023,11 @@ function speakNext(){
       _harveyCurrentSpeech=clean.toLowerCase().slice(0,60);
       _harveySpeechFull=clean.toLowerCase(); // full text for similarity check
       if(vsTxt&&(voiceMode||micState==='query'))vsTxt.textContent='HARVEY SPEAKING...';
+      // Keep SR alive during Harvey TTS -- flag it so onresult only processes stop/clear/cut
+      // This lets "stop stop" / "cut cut" get through even while Harvey is speaking
       _srPausedForTTS=true;
-      if(_iosMode){
-        // iOS mode: abort SR to free AVAudioSession for TTS
-        if(recog){try{recog.abort();}catch(e){}}
-        recogBusy=false;
-        vdbgLog('iOS mode: SR aborted for TTS','var(--a)');
-      } else {
-        // Standard: keep SR alive in stop-only mode
-        vdbgLog('SR stop-only mode (Harvey TTS)','var(--a)');
-      }
+      // Do NOT abort SR -- leave running to catch user interrupt commands
+      vdbgLog('SR stop-only mode (Harvey TTS)','var(--a)');
       // Whisper: pause MediaRecorder
       if(_whisperMode&&_mediaRecorder&&_mediaRecorder.state==='recording'){
         try{_mediaRecorder.pause();}catch(e){}
@@ -1046,40 +1046,19 @@ function speakNext(){
       if(_srPausedForTTS){
         _srPausedForTTS=false;
         if(micState==='query'||voiceMode){
-          if(_iosMode){
-            // iOS mode: TTS released audio session — wait for AVAudioSession to settle
-            // then do a clean fresh-instance rebuild with watchdog
-            setTimeout(()=>{
-              if(_speakBusy)return;
+          // Keep echo guard active for 1.5s after TTS ends, then reopen mic
+          const _decayMs=IS_IOS?1200:700;
+          setTimeout(()=>{
+            if(!_speakBusy){
+              // Echo guard stays on for 1.5s from TTS end
               window._echoGuardUntil=Date.now()+1500;
-              recog=null; recogBusy=false;
-              if(micState==='query'||voiceMode){
+              if(!recogBusy&&(micState==='query'||voiceMode)){
                 if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
                 safeStart();
-                vdbgLog('iOS mode: SR fresh restart after TTS','var(--g)');
-                // Watchdog: retry if SR still not running after 2.5s
-                setTimeout(()=>{
-                  if(!recogBusy&&!_speakBusy&&(micState==='query'||voiceMode)){
-                    vdbgLog('iOS mode watchdog: retrying SR','var(--a)');
-                    recog=null;recogBusy=false;safeStart();
-                  }
-                },2500);
+                vdbgLog('SR restarted (echo decay done)','var(--g)');
               }
-            },900);
-          } else {
-            // Standard strategy (Android / desktop / non-iOS-mode)
-            const _decayMs=IS_IOS?1200:700;
-            setTimeout(()=>{
-              if(!_speakBusy){
-                window._echoGuardUntil=Date.now()+1500;
-                if(!recogBusy&&(micState==='query'||voiceMode)){
-                  if(vsTxt)vsTxt.textContent=voiceMode?'HARVEY LISTENING -- SPEAK ANYTIME':'HARVEY LISTENING...';
-                  safeStart();
-                  vdbgLog('SR restarted (echo decay done)','var(--g)');
-                }
-              }
-            },_decayMs);
-          }
+            }
+          },_decayMs);
         }
       }
       // Whisper: resume MediaRecorder
@@ -13653,14 +13632,20 @@ function activateVoiceMode(){
   ]);
   harveyMsg(msg);speak(msg);
 
-  micState='query';
-  try{recog?.abort();}catch(e){}
-  recogBusy=false;
-  clearTimeout(speechTimer);
-  setTimeout(()=>safeStart(),600);
+  if(_iosWhisperMode){
+    micState='query';
+    setTimeout(()=>_iosWStartSession(),400);
+  } else {
+    micState='query';
+    try{recog?.abort();}catch(e){}
+    recogBusy=false;
+    clearTimeout(speechTimer);
+    setTimeout(()=>safeStart(),600);
+  }
 }
 
 function deactivateVoiceMode(silent){
+  if(_iosWActive)_iosWStopSession();
   voiceMode=false;
   clearTimeout(_iosWatchdogTimer);_iosWatchdogTimer=null;
   if(vmBadge)vmBadge.classList.remove('active');
@@ -13805,6 +13790,167 @@ async function transcribeAudio(blob){
   });
   return r.text.trim();
 }
+function _toggleIosWhisper(){
+  _iosWhisperMode=!_iosWhisperMode;
+  _initIosWhisperBtn();
+  if(_iosWhisperMode){
+    try{recog?.abort();}catch(e){}recogBusy=false;
+    harveyMsg('iOS voice mode <strong>ON</strong>, sir. Tap mic — I detect when you stop speaking automatically.');
+    speak('iOS voice mode on, sir.');
+  } else {
+    _iosWStopSession();
+    harveyMsg('iOS voice mode <strong>OFF</strong>, sir. Standard voice recognition active.');
+    speak('iOS voice mode off, sir.');
+  }
+}
+function _initIosWhisperBtn(){
+  const b=document.getElementById('mbtn-ios-whisper');
+  if(!b)return;
+  b.textContent=_iosWhisperMode?'📱 IOS ON':'📱 IOS';
+  b.style.color=_iosWhisperMode?'var(--a)':'';
+  b.style.borderColor=_iosWhisperMode?'var(--a)':'';
+}
+window.addEventListener('load',()=>setTimeout(_initIosWhisperBtn,400));
+
+async function _iosWEnsureModel(){
+  if(_wReady)return true;
+  if(vsTxt)vsTxt.textContent='LOADING WHISPER... (~20s first time)';
+  try{
+    await loadWhisper(p=>{
+      if(p.status==='downloading'&&vsTxt)
+        vsTxt.textContent='WHISPER '+(p.progress?Math.round(p.progress)+'%':'loading...');
+    });
+    return true;
+  }catch(e){if(vsTxt)vsTxt.textContent='Whisper load failed';return false;}
+}
+
+async function _iosWOpenStream(){
+  if(_iosWStream&&_iosWStream.active)return true;
+  try{
+    _iosWStream=await navigator.mediaDevices.getUserMedia({
+      audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}
+    });
+    return true;
+  }catch(e){if(vsTxt)vsTxt.textContent='Mic access denied';return false;}
+}
+
+async function _iosWStartSession(){
+  if(_iosWActive||_iosWProcessing)return;
+  const ok1=await _iosWEnsureModel();if(!ok1)return;
+  const ok2=await _iosWOpenStream();if(!ok2)return;
+  _iosWActive=true;
+  micState='query';
+  if(mbEl)mbEl.classList.add('active');
+  if(vsTxt)vsTxt.textContent='IOS WHISPER — LISTENING...';
+  _iosWListenLoop();
+}
+
+function _iosWStopSession(){
+  _iosWActive=false;
+  clearTimeout(_iosWVADTimer);_iosWVADTimer=null;
+  if(_iosWMediaRec&&_iosWMediaRec.state!=='inactive'){try{_iosWMediaRec.stop();}catch(e){}}
+  _iosWMediaRec=null;_iosWChunks=[];_iosWRecording=false;
+  if(_iosWCtx){try{_iosWCtx.close();}catch(e){}}_iosWCtx=null;_iosWAnalyser=null;
+  if(_iosWStream){_iosWStream.getTracks().forEach(t=>t.stop());_iosWStream=null;}
+  if(mbEl)mbEl.classList.remove('active');
+  micState='off';
+  if(vsTxt&&!_iosWProcessing)vsTxt.textContent='IOS WHISPER — TAP MIC';
+}
+
+async function _iosWListenLoop(){
+  if(!_iosWActive||_iosWProcessing)return;
+  if(!_iosWStream||!_iosWStream.active){
+    const ok=await _iosWOpenStream();if(!ok){_iosWActive=false;return;}
+  }
+  // Wait while Harvey is speaking
+  if(_speakBusy||_srPausedForTTS){
+    if(vsTxt)vsTxt.textContent='IOS WHISPER — WAITING...';
+    _iosWVADTimer=setTimeout(()=>_iosWListenLoop(),400);
+    return;
+  }
+  if(vsTxt)vsTxt.textContent='IOS WHISPER — LISTENING...';
+  _iosWChunks=[];
+  _iosWRecording=true;
+  // Set up VAD analyser
+  try{
+    if(!_iosWCtx||_iosWCtx.state==='closed'){
+      _iosWCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+    }
+    const src=_iosWCtx.createMediaStreamSource(_iosWStream);
+    _iosWAnalyser=_iosWCtx.createAnalyser();
+    _iosWAnalyser.fftSize=256;
+    src.connect(_iosWAnalyser);
+  }catch(e){_iosWAnalyser=null;}
+  const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/mp4';
+  try{_iosWMediaRec=new MediaRecorder(_iosWStream,{mimeType:mime});}
+  catch(e){_iosWMediaRec=new MediaRecorder(_iosWStream);}
+  _iosWMediaRec.ondataavailable=e=>{if(e.data&&e.data.size>0)_iosWChunks.push(e.data);};
+  _iosWMediaRec.start(100);
+  // VAD poll
+  let _spDetected=false,_silStart=0;
+  const _THRESH=0.012,_SIL_MS=1400,_MAX_MS=12000,_MIN_MS=400;
+  const _t0=Date.now();
+  const _poll=setInterval(()=>{
+    if(!_iosWRecording||!_iosWActive){clearInterval(_poll);return;}
+    const elapsed=Date.now()-_t0;
+    let rms=0.1;
+    if(_iosWAnalyser){
+      const buf=new Uint8Array(_iosWAnalyser.frequencyBinCount);
+      _iosWAnalyser.getByteTimeDomainData(buf);
+      let sum=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v;}
+      rms=Math.sqrt(sum/buf.length);
+    }
+    if(rms>_THRESH){
+      _spDetected=true;_silStart=0;
+      if(vsTxt)vsTxt.textContent='IOS WHISPER — SPEAKING...';
+    } else if(_spDetected&&elapsed>_MIN_MS){
+      if(!_silStart)_silStart=Date.now();
+      const silDur=Date.now()-_silStart;
+      if(vsTxt)vsTxt.textContent='IOS WHISPER — '+(Math.round(silDur/_SIL_MS*100))+'%...';
+      if(silDur>=_SIL_MS){clearInterval(_poll);_iosWSendUtterance();return;}
+    }
+    if(elapsed>=_MAX_MS){clearInterval(_poll);if(_spDetected)_iosWSendUtterance();else _iosWListenLoop();}
+  },80);
+}
+
+async function _iosWSendUtterance(){
+  if(!_iosWRecording)return;
+  _iosWRecording=false;_iosWProcessing=true;
+  if(vsTxt)vsTxt.textContent='IOS WHISPER — PROCESSING...';
+  if(mbEl)mbEl.classList.remove('active');
+  await new Promise(res=>{
+    if(!_iosWMediaRec||_iosWMediaRec.state==='inactive'){res();return;}
+    _iosWMediaRec.onstop=res;
+    try{_iosWMediaRec.stop();}catch(e){res();}
+  });
+  try{
+    if(_iosWChunks.length>0){
+      const blob=new Blob(_iosWChunks,{type:_iosWMediaRec?.mimeType||'audio/webm'});
+      _iosWChunks=[];
+      if(blob.size>2000){
+        const text=await transcribeAudio(blob);
+        if(text&&text.trim().length>1){
+          const norm=normaliseVoiceInput(text.trim());
+          const final=normalizeSpeech(norm);
+          if(isSilenceTTS(norm)){
+            stopSpeech();
+          } else if(isDeactivationPhrase(norm)){
+            _iosWStopSession();deactivateVoiceMode(false);
+            _iosWhisperMode=false;_initIosWhisperBtn();
+            _iosWProcessing=false;return;
+          } else {
+            ciEl.value=final;
+            if(vsTxt)vsTxt.textContent='> '+final.slice(0,50);
+            handleInput();
+          }
+        }
+      }
+    }
+  }catch(e){if(vsTxt)vsTxt.textContent='IOS WHISPER — error, retrying...';}
+  _iosWProcessing=false;
+  setTimeout(()=>{if(_iosWActive&&_iosWhisperMode&&!_iosWProcessing)_iosWListenLoop();},600);
+}
+
 async function initWhisperMode(){
   if(_whisperInitDone)return;
   if(vsTxt)vsTxt.textContent='LOADING WHISPER... (first time ~30s)';
@@ -14545,9 +14691,9 @@ function buildRecog(){
     if(micState==='off')return;
     // iOS-specific: 'aborted','network','audio-capture' mean AVAudioSession is stale
     // Force a full recog rebuild rather than just restart -- prevents the 2min hang
-    if(_iosMode&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture'||e.error==='no-speech')){
-      vdbgLog('iOS mode SR error '+e.error+' -- full rebuild','var(--a)');
-      recog=null;
+    if(IS_IOS&&(e.error==='aborted'||e.error==='network'||e.error==='audio-capture')){
+      vdbgLog('iOS SR error '+e.error+' -- full rebuild','var(--a)');
+      recog=null; // force buildRecog() to create fresh instance
       _iosSrErrors=((_iosSrErrors||0)+1);
       // Exponential backoff after repeated errors to let AVAudioSession recover
       const backoff=Math.min(500*Math.pow(1.5,_iosSrErrors),8000);
@@ -14566,13 +14712,9 @@ function buildRecog(){
     if(!voiceMode)vsBar.style.display='none';
     vdbgLog('END buf:['+(_srBuffer||'').slice(0,20)+'] timer:'+(speechTimer?'RUN':'idle'),'#888');
     if(micState==='query'&&!_srPausedForTTS){
-      const delay=_iosMode?300:IS_IOS?450:150;
-      setTimeout(()=>{
-        if(micState==='query'&&!recogBusy&&!_srPausedForTTS){
-          if(_iosMode){recog=null;}
-          safeStart();
-        }
-      },delay);
+      // Restart to catch next utterance -- buffer preserved at module level
+      const delay=IS_IOS?450:150;
+      setTimeout(()=>{ if(micState==='query'&&!recogBusy&&!_srPausedForTTS)safeStart(); },delay);
     }
   };
   return r;
@@ -14878,42 +15020,27 @@ function _startIosWatchdog(){
 function safeStart(){
   if(micState==='off'||!SR)return;
   if(recogBusy){
-    const _deadlock=_iosMode?1200:2000;
     setTimeout(()=>{
-      if(recogBusy){
-        recogBusy=false;
-        if(_iosMode){recog=null;}
-        safeStart();
-      }
-    },_deadlock);
+      if(recogBusy){recogBusy=false;safeStart();}
+    },2000);
     return;
   }
   recog=buildRecog();
   try{
     recog.start();
+
   }catch(e){
     recogBusy=false;
-    if(_iosMode){recog=null;setTimeout(()=>safeStart(),800);}
-    else{setTimeout(()=>safeStart(),IS_IOS?2500:1000);}
+    setTimeout(()=>safeStart(),IS_IOS?2500:1000);
   }
 }
 
-function _toggleIosMode(){
-  _iosMode=!_iosMode;
-  _initIosBtn();
-  harveyMsg(_iosMode?'iOS voice mode <strong>ON</strong>, sir. Optimised SR restart strategy active.':
-                     'iOS voice mode <strong>OFF</strong>, sir. Standard SR strategy active.');
-}
-function _initIosBtn(){
-  const b=document.getElementById('mbtn-ios');
-  if(!b)return;
-  b.textContent=_iosMode?'📱 IOS ON':'📱 IOS OFF';
-  b.style.color=_iosMode?'var(--a)':'var(--t3)';
-  b.style.borderColor=_iosMode?'var(--a)':'';
-}
-window.addEventListener('load',()=>{ setTimeout(_initIosBtn,300); });
-
 function toggleMic(){
+  if(_iosWhisperMode){
+    if(_iosWActive){_iosWStopSession();}
+    else{_iosWStartSession();}
+    return;
+  }
   if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
   if(!SR){harveyMsg('Voice input is not supported on this browser, sir. Please try Chrome on Android or Safari on iOS 14.5 or later.');return;}
   if(voiceMode){deactivateVoiceMode();return;}
