@@ -1877,6 +1877,13 @@ function fuzzyMatchTown(q){
     }))return town;
   }
   for(const t of TOWNS){const words=t.split(' ');if(words.some(w=>w.length>=5&&uq.includes(w)))return t;}
+  // Final fallback: check TOWN_CODE_MAP abbreviations (AMK, CCK, etc.)
+  const _tcm=TOWN_CODE_MAP[uq.trim()];
+  if(_tcm&&TOWNS.includes(_tcm)) return _tcm;
+  // Also try with word boundary for multi-word abbreviations
+  for(const [code,name] of Object.entries(TOWN_CODE_MAP)){
+    if(code.length>=2&&code.length<=4&&new RegExp('\\b'+code+'\\b').test(uq)&&TOWNS.includes(name)) return name;
+  }
   return null;
 }
 
@@ -3232,16 +3239,35 @@ function parseQuery(raw){
   if(sz)res.size=Number(sz[1]);
   const ly=raw.match(/(?:built|lease|commenced?|lease\s*start|year\s*built)\s*(?:year\s*)?(\d{4})|(\d{4})\s*(?:built|lease|commenced?)/i);
   if(ly)res.leaseYear=Number(ly[1]||ly[2]);
+  // ── Street extraction — order-independent ──
+  // Strip block, floor, flat type, EV keywords from ANYWHERE in the string
+  // so street is recognised regardless of input order
+  const qForStreet=q
+    .replace(/\b(?:BLK|BLOCK)\s*\d+[A-Z]?\b/g,'')         // block 322, blk 45a
+    .replace(/\b\d+[A-Z]?\b(?=\s*(?:BLK|BLOCK|FLOOR|LEVEL|STOREY|ROOM|RM))/g,'') // bare block num before keyword
+    .replace(/\b(?:FLOOR|LEVEL|STOREY|FLR|LVL)\s*\d+\b/g,'')  // floor 5, level 10
+    .replace(/\b\d+\s*(?:ST|ND|RD|TH)\s*(?:FLOOR|STOREY|LEVEL|FLR)\b/g,'') // 5th floor
+    .replace(/\b\d+\s*(?:ROOM|RM|BED)\b/g,'')               // 4 room, 3rm
+    .replace(/\b(?:EXECUTIVE|EXEC|ESTIMATE|VALUE|VALUAT|SEARCH|RECENT|FIND|SHOW)\b/g,'')
+    .replace(/\b(?:HIGHEST|LOWEST|CHEAPEST|MOST|EXPENSIVE|RECENT|ALL|ANY|IN|AT|FOR|THE)\b/g,'')
+    // Strip bare 3-4 digit block numbers (not years, not sizes)
+    .replace(/\b(\d{3,4}[A-Z]?)\b/g,(m,v)=>{const n=parseInt(v);return(n>=1960&&n<=2025)||(n>=50&&n<=200)?m:'';})
+    .replace(/\s+/g,' ').trim();
+
+  // Also keep qNoBlockClean for fallback (strips only from front — backward compat)
   const qNoBlock=q.replace(/^\s*(?:BLK|BLOCK)?\s*\d+[A-Z]?\s*/,'').trim();
-  // Strip analysis/filter keywords before stMatch2/3 to prevent greedy capture
-  // Strip analysis/filter keywords AND flat type patterns for stMatch2/3
-  // "lowest 4 room in CLEMENTI WST ST 1" → "CLEMENTI WST ST 1"
   const qNoBlockClean=qNoBlock
     .replace(/\b(?:HIGHEST|LOWEST|RECENT|ALL|ANY|TYPES|TYPE|MOST|CHEAPEST|EXPENSIVE|IN|AT|FOR|THE)\b/g,'')
     .replace(/\b\d+\s*(?:ROOM|RM|BED|EXEC|EXECUTIVE)\b/gi,'')
     .replace(/\b(?:EXECUTIVE|EXEC|ROOM|ROOMS)\b/gi,'')
     .replace(/\s+/g,' ').trim();
-  const stMatch=qNoBlock.match(/\b([A-Z][A-Z0-9\s]*?(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK|AVE|RD|DR|CRES|CL|LOR|JLN|HTS)\s*\d*[A-Z]?)\b/)
+
+  // Primary: match full street name including number suffix (AVE 4, ST 52, etc.)
+  // Uses qForStreet so block/floor/flattype in any position don't interfere
+  const _stRx=/\b([A-Z][A-Z0-9]*(?:\s+[A-Z][A-Z0-9]*)*?\s*(?:AVENUE|STREET|DRIVE|ROAD|CRESCENT|CLOSE|WALK|LINK|LANE|VIEW|RISE|WAY|HEIGHTS|GROVE|CIRCLE|PLACE|TERRACE|LORONG|JALAN|GARDENS|COURTS|MARKET|PARK|AVE|RD|DR|CRES|CL|LOR|JLN|HTS)(?:\s+\d+[A-Z]?)?)\b/;
+  const _stRxST=/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:NTH|STH|EST|WST|CTRL))?\s+ST\s+\d+[A-Z]?)\b/;
+  const stMatch=qForStreet.match(_stRx)
+    ||qForStreet.match(_stRxST)
     ||qNoBlockClean.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d+[A-Z]?))\b/)
     ||qNoBlockClean.match(/\b([A-Z]{3,}(?:\s+[A-Z]{3,})*(?:\s+(?:NTH|STH|EST|WST|CTRL))(?:\s+(?:ST|AVE|DR|RD|CL|CRES|LOR|JLN)\s*\d*[A-Z]?))\b/);
   if(stMatch){
@@ -3249,8 +3275,6 @@ function parseQuery(raw){
       .replace(/^\s*(?:BLK|BLOCK)\s*\d+[A-Z]?\s*/i,'')
       .replace(/\s+/g,' ').trim();
     if(candidate.length>3){
-      // Immediately canonicalize to resolve typos and directional variants
-      // "CLMEENTI WST ST 1" → "CLEMENTI WEST ST 1", not stored as raw typo
       const _canon=DB&&DB.loaded?canonicalStreet(candidate):candidate;
       res.street=_canon||candidate;
     }
@@ -13892,7 +13916,8 @@ function _iosWStopSession(){
   _iosWActive=false;clearTimeout(_iosWVADTimer);_iosWVADTimer=null;
   if(_iosWMediaRec&&_iosWMediaRec.state!=='inactive'){try{_iosWMediaRec.stop();}catch(e){}}
   _iosWMediaRec=null;_iosWChunks=[];_iosWRecording=false;
-  if(_iosWCtx){try{_iosWCtx.close();}catch(e){}}_iosWCtx=null;_iosWAnalyser=null;
+  if(_iosWAnalyser){try{_iosWAnalyser.disconnect();}catch(e){}}_iosWAnalyser=null;
+  if(_iosWCtx){try{_iosWCtx.close();}catch(e){}}_iosWCtx=null;
   if(_iosWStream){_iosWStream.getTracks().forEach(t=>t.stop());_iosWStream=null;}
   if(mbEl)mbEl.classList.remove('active');
   voiceMode=false;vmBadge.classList.remove('active');vsBar.style.display='none';
@@ -13909,22 +13934,57 @@ async function _iosWListenLoop(){
   window._iosWWaitStart=0;
   if(vsTxt)vsTxt.textContent='LISTENING... (speak now)';
   _iosWChunks=[];_iosWRecording=true;
+
+  // ── AudioContext VAD — iOS-safe setup ──
+  // No custom sampleRate — iOS ignores it and may silently break the analyser
+  // Reuse existing ctx; only create new source each loop (don't reuse src node)
   try{
-    if(!_iosWCtx||_iosWCtx.state==='closed')_iosWCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+    if(!_iosWCtx||_iosWCtx.state==='closed'){
+      _iosWCtx=new(window.AudioContext||window.webkitAudioContext)();
+    }
+    // Resume suspended context (iOS requires user gesture to start AudioContext)
+    if(_iosWCtx.state==='suspended') await _iosWCtx.resume();
+    // Create fresh analyser and source each loop — disconnect any previous
+    if(_iosWAnalyser){try{_iosWAnalyser.disconnect();}catch(e){}}
+    _iosWAnalyser=_iosWCtx.createAnalyser();
+    _iosWAnalyser.fftSize=512; // larger fftSize → more stable RMS on iPad
+    _iosWAnalyser.smoothingTimeConstant=0.3;
     const src=_iosWCtx.createMediaStreamSource(_iosWStream);
-    _iosWAnalyser=_iosWCtx.createAnalyser();_iosWAnalyser.fftSize=256;src.connect(_iosWAnalyser);
-  }catch(e){_iosWAnalyser=null;}
-  const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/mp4';
-  try{_iosWMediaRec=new MediaRecorder(_iosWStream,{mimeType:mime});}catch(e){_iosWMediaRec=new MediaRecorder(_iosWStream);}
+    src.connect(_iosWAnalyser);
+  }catch(e){_iosWAnalyser=null;vdbgLog('iOS VAD analyser error: '+e.message,'var(--r)');}
+
+  // ── MediaRecorder — iOS-safe mime type ──
+  // iOS Safari: only supports audio/mp4 (AAC). Never use webm on iOS.
+  // Use no mimeType arg at all — let browser pick its native format
+  _iosWMediaRec=null;
+  try{
+    // Try audio/mp4 first (iOS native), then fall back to browser default
+    const _iosMime=MediaRecorder.isTypeSupported('audio/mp4')?'audio/mp4':
+                   MediaRecorder.isTypeSupported('audio/aac')?'audio/aac':'';
+    _iosWMediaRec=_iosMime?new MediaRecorder(_iosWStream,{mimeType:_iosMime}):new MediaRecorder(_iosWStream);
+  }catch(e){
+    try{_iosWMediaRec=new MediaRecorder(_iosWStream);}catch(e2){
+      vdbgLog('iOS MediaRecorder failed: '+e2.message,'var(--r)');
+      _iosWActive=false;return;
+    }
+  }
   _iosWMediaRec.ondataavailable=e=>{if(e.data&&e.data.size>0)_iosWChunks.push(e.data);};
-  _iosWMediaRec.start(100);
+  _iosWMediaRec.onerror=e=>vdbgLog('iOS MediaRec error: '+e.error,'var(--r)');
+  _iosWMediaRec.start(250); // 250ms chunks — more reliable on iOS than 100ms
+
   let _spDetected=false,_silStart=0;
-  const _THRESH=0.010,_SIL_MS=2000,_MAX_MS=15000,_MIN_MS=300,_t0=Date.now();
+  // Lower threshold slightly — iPad mic can be quieter at distance
+  const _THRESH=0.008,_SIL_MS=2000,_MAX_MS=15000,_MIN_MS=400,_t0=Date.now();
   const _poll=setInterval(()=>{
     if(!_iosWRecording||!_iosWActive){clearInterval(_poll);return;}
     const elapsed=Date.now()-_t0;
-    let rms=0.1;
-    if(_iosWAnalyser){const buf=new Uint8Array(_iosWAnalyser.frequencyBinCount);_iosWAnalyser.getByteTimeDomainData(buf);let sum=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v;}rms=Math.sqrt(sum/buf.length);}
+    let rms=0.05; // non-zero fallback so if analyser fails we still eventually time out
+    if(_iosWAnalyser){
+      const buf=new Uint8Array(_iosWAnalyser.frequencyBinCount);
+      _iosWAnalyser.getByteTimeDomainData(buf);
+      let sum=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v;}
+      rms=Math.sqrt(sum/buf.length);
+    }
     if(rms>_THRESH){_spDetected=true;_silStart=0;if(vsTxt)vsTxt.textContent='SPEAKING...';}
     else if(_spDetected&&elapsed>_MIN_MS){
       if(!_silStart)_silStart=Date.now();
