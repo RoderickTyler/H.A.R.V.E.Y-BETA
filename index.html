@@ -875,6 +875,7 @@ let _iosWhisperMode=_IS_IOS_DEV;
 let _iosWRecording=false,_iosWProcessing=false,_iosWActive=false;
 let _iosWMediaRec=null,_iosWChunks=[],_iosWStream=null;
 let _iosWVADTimer=null,_iosWAnalyser=null,_iosWCtx=null;
+let _lastExpandPromptTs=0; // timestamp when Harvey last showed expand scope panel
 
 // ══ ENERGY MONITOR — detects user speaking over Harvey ══
 
@@ -1727,7 +1728,33 @@ function floorToStorey(f){
 function computeEstimate(params){
   const {town,flatType,street,block,floor,size,leaseYear}=params;
   const LEASE_WINDOW=3, MIN_COMPS=2;
-  const mySize=Number(size), myFloor=Number(floor);
+  // Flat type typical sqm ranges — flatType prevails if provided size is very far off
+  const _FT_SQM={'1 ROOM':{min:25,max:45,typ:33},'2 ROOM':{min:40,max:55,typ:47},
+                 '3 ROOM':{min:60,max:75,typ:67},'4 ROOM':{min:80,max:110,typ:93},
+                 '5 ROOM':{min:105,max:145,typ:121},'EXECUTIVE':{min:130,max:175,typ:146}};
+  let mySize=Number(size)||0;
+  const myFloor=Number(floor);
+  // If flatType given AND size given, validate size against flatType range
+  if(flatType&&mySize>0&&_FT_SQM[flatType]){
+    const _rng=_FT_SQM[flatType];
+    const _diff=Math.abs(mySize-_rng.typ);
+    if(_diff>20){
+      // Large mismatch — flatType wins, use typical sqm for this flat type
+      vdbgLog('Size '+mySize+'sqm far from '+flatType+' range, using typical '+_rng.typ,'var(--a)');
+      mySize=_rng.typ;
+    } else if(_diff>3&&block&&street&&DB.loaded){
+      // Medium mismatch — snap to nearest available sqm on this block/street
+      const _avail=getSizesForBlock(block,street,flatType);
+      if(_avail.length){
+        const _nearest=_avail.reduce((a,b)=>Math.abs(b-mySize)<Math.abs(a-mySize)?b:a);
+        vdbgLog('Snapping size '+mySize+' → '+_nearest+' (nearest on block)','var(--a)');
+        mySize=_nearest;
+      }
+    }
+    // ≤3 sqm diff: use provided size as-is
+  } else if(flatType&&mySize===0&&_FT_SQM[flatType]){
+    mySize=_FT_SQM[flatType].typ; // no size given — use typical for flat type
+  }
 
   function leaseOk(r){
     if(!leaseYear)return true;
@@ -3235,10 +3262,15 @@ function parseQuery(raw){
   if(fl) res.floor=Number(fl[1]||fl[2]);
   if(res.block&&res.floor&&String(res.floor)===String(res.block)&&res.street){res.block='';}
 
-  const sz=raw.match(/(\d+)\s*(?:sqm|sq\.?m\b|m2|square\s*m)/i);
-  if(sz)res.size=Number(sz[1]);
-  const ly=raw.match(/(?:built|lease|commenced?|lease\s*start|year\s*built)\s*(?:year\s*)?(\d{4})|(\d{4})\s*(?:built|lease|commenced?)/i);
-  if(ly)res.leaseYear=Number(ly[1]||ly[2]);
+    // Size: sqm directly, or sqft auto-converted (1 sqft = 0.0929 sqm)
+  const szM=raw.match(/(\d+(?:\.\d+)?)\s*(?:sqm|sq\.?m\b|m2|square\s*met(?:re|er)s?)/i);
+  const szF=raw.match(/(\d+(?:\.\d+)?)\s*(?:sqft|sq\.?ft|square\s*f(?:ee|oo)t)/i);
+  const sz=szM||szF;
+  if(szM) res.size=Math.round(Number(szM[1]));
+  else if(szF) res.size=Math.round(Number(szF[1])*0.0929);
+  // Lease year: extended patterns including TOP, leased YYYY, since YYYY, bare year
+  const ly=raw.match(/(?:built|lease|commenced?|lease\s*start|year\s*built|leased|TOP|T\.O\.P)\s*(?:year\s*|in\s*|since\s*)?(\d{4})|(?:since|from|circa|around)\s*(\d{4})|(?:^|\s)(19[6-9]\d|20[0-3]\d)(?:\s|$)/i);
+  if(ly) res.leaseYear=Number(ly[1]||ly[2]||ly[3]);
   // ── Street extraction — order-independent ──
   // Strip block, floor, flat type, EV keywords from ANYWHERE in the string
   // so street is recognised regardless of input order
@@ -3502,6 +3534,7 @@ function sfCopy(fid){
 
 function buildEvExpansionPanel(params){
   const fid='evx-'+Date.now();
+  _lastExpandPromptTs=Date.now(); // stamp so voice/text commands can trigger expand
   const nearbyStreets=params.town?getStreetsForTown(params.town).filter(s=>s!==params.street).slice(0,12):[];
 
   const html=`<div class="hud-form" id="${fid}" style="margin-top:8px">
@@ -3823,7 +3856,7 @@ function showTransactions(recs,params,is6mo){
   if(ctx.town){convCtx.town=ctx.town;workingCtx.townCtx=ctx.town;}
   if(ctx.block){convCtx.block=ctx.block;workingCtx.blockCtx=ctx.block;}
   if(ctx.flatType) convCtx.flatType=ctx.flatType;
-  workingCtx._lastEVCtx={street:ctx.street||null,town:ctx.town||null,block:ctx.block||null,flatType:ctx.flatType||null,ts:Date.now()};
+  workingCtx._lastEVCtx={street:ctx.street||null,town:ctx.town||null,block:ctx.block||null,flatType:ctx.flatType||null,size:ctx.size||null,leaseYear:ctx.leaseYear||null,ts:Date.now()};
   mode='menu';
 }
 
@@ -7757,10 +7790,12 @@ async function _handleInputInner(raw){
         {
           const _evCtxX=workingCtx._lastEVCtx;
           const _evFreshX=_evCtxX&&(Date.now()-_evCtxX.ts)<180000;
-          const _isExpandStreetX=/^(expand\s+(to\s+)?street|whole\s+street|all\s+(of\s+)?(the\s+)?street|full\s+street|street\s+level|use\s+(the\s+)?whole\s+street|use\s+street)/i.test(raw.trim());
-          const _isExpand2yrX=/^(expand\s+)?2\s*years?$|^two\s*years?$|^expand\s+two\s*years?$|^24\s*months?$/i.test(raw.trim());
+          // Also valid within 3 min of Harvey showing the expand scope panel
+          const _expandPromptFresh=(Date.now()-_lastExpandPromptTs)<180000;
+          const _isExpandStreetX=/^(expand\s+(to\s+)?street|whole\s+street|all\s+(of\s+)?(the\s+)?street|full\s+street|street\s+level|use\s+(the\s+)?whole\s+street|use\s+street|all\s+blocks?|blocks?\s+on\s+(the\s+)?street|find\s+all\s+blocks?|find\s+all|find\s+(the\s+)?street|all\s+on\s+(the\s+)?street|show\s+all\s+blocks?|expand\s+blocks?|use\s+all\s+blocks?|same\s+street\s+all|entire\s+street)/i.test(raw.trim());
+          const _isExpand2yrX=/\b(2\s*years?\s*data|two\s*years?\s*data|last\s*2\s*years?|use\s*2\s*years?|expand\s*(to\s*)?2\s*years?|expand\s*two\s*years?|24\s*months?|backdated|more\s*data|older\s*data|expand\s*(the\s*)?(?:time|period|date|range)|more\s*history|historical\s*data|go\s*back\s*(further|more)|widen\s*(the\s*)?(?:time|date|range))\b/i.test(raw.trim())||/^(expand\s+)?2\s*years?$|^two\s*years?$|^24\s*months?$/i.test(raw.trim());
           const _notOverrideX=!/\b(search|highest|lowest|recent|price range|analysis|how many|most expensive|cheapest)\b/i.test(raw);
-          if(_evFreshX && _notOverrideX && (_isExpandStreetX||_isExpand2yrX) && _evCtxX.street){
+          if((_evFreshX||_expandPromptFresh) && _notOverrideX && (_isExpandStreetX||_isExpand2yrX) && _evCtxX&&_evCtxX.street){
             const _expCtxX={...ctx,
               street:_evCtxX.street,town:_evCtxX.town||ctx.town,
               block:_evCtxX.block||ctx.block,flatType:_evCtxX.flatType||ctx.flatType,
