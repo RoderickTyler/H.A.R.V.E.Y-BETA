@@ -870,7 +870,6 @@ let _energyMonReady=false;   // true once mic stream is open
 let _harveyRecentSpeech=[];    // Last few utterances for filtering
 let _whisperMode=false,_mediaRecorder=null,_audioChunks=[],_ptbHeld=false,_whisperInitDone=false;
 let _wReady=false,_wLoading=false,_wPipeline=null,_wCBs=[];
-// ── iOS Whisper auto-VAD mode ──
 const _IS_IOS_DEV=/iPhone|iPad|iPod/i.test(navigator.userAgent);
 let _iosWhisperMode=_IS_IOS_DEV;
 let _iosWRecording=false,_iosWProcessing=false,_iosWActive=false;
@@ -1692,6 +1691,9 @@ async function loadData(){
         if(both!==up&&both!==contracted) _sf[both.toLowerCase()]=up;
       }
     })();
+    // Build street→town lookup index (one-time — no repeated resale scans after this)
+    _buildStreetTownIndex();
+
     document.getElementById('lat').textContent=(Date.now()-t0)+'ms';
     document.getElementById('txcount').textContent=DB.resale.length.toLocaleString();
     document.getElementById('load-bar').style.width='100%';
@@ -2943,34 +2945,58 @@ const STREET_SHORTFORMS={
 };
 
 const TOWN_CODE_MAP={
-  'AMK':'ANG MO KIO',
-  'BB':'BUKIT BATOK',
-  'BD':'BEDOK',
-  'BH':'BUKIT PANJANG',
-  'BM':'BUKIT MERAH',
-  'BP':'BUKIT PANJANG',
-  'BT':'BUKIT TIMAH',
-  'CCK':'CHOA CHU KANG',
-  'CL':'CLEMENTI',
-  'CT':'CENTRAL AREA',
-  'GL':'GEYLANG',
-  'HG':'HOUGANG',
-  'JE':'JURONG EAST',
-  'JW':'JURONG WEST',
-  'KWN':'KALLANG/WHAMPOA',
-  'MP':'MARINE PARADE',
-  'PG':'PUNGGOL',
-  'PRC':'PASIR RIS',
-  'QT':'QUEENSTOWN',
-  'SB':'SEMBAWANG',
-  'SGN':'SERANGOON',
-  'SK':'SENGKANG',
-  'TAP':'TOA PAYOH',
-  'TG':'TENGAH',
-  'TP':'TAMPINES',
-  'WL':'WOODLANDS',
-  'YS':'YISHUN',
+  // Abbreviation → canonical   |   Full name → canonical
+  // Add new towns here — both abbreviation and full name entries
+  'AMK':'ANG MO KIO',           'ANG MO KIO':'ANG MO KIO',
+  'BD':'BEDOK',                 'BEDOK':'BEDOK',
+  'BH':'BISHAN',                'BISHAN':'BISHAN',
+  'BB':'BUKIT BATOK',           'BUKIT BATOK':'BUKIT BATOK',
+  'BM':'BUKIT MERAH',           'BUKIT MERAH':'BUKIT MERAH',
+  'BP':'BUKIT PANJANG',         'BUKIT PANJANG':'BUKIT PANJANG',
+  'BT':'BUKIT TIMAH',           'BUKIT TIMAH':'BUKIT TIMAH',
+  'CT':'CENTRAL AREA',          'CENTRAL AREA':'CENTRAL AREA',
+  'CCK':'CHOA CHU KANG',        'CHOA CHU KANG':'CHOA CHU KANG',
+  'CL':'CLEMENTI',              'CLEMENTI':'CLEMENTI',
+  'GL':'GEYLANG',               'GEYLANG':'GEYLANG',
+  'HG':'HOUGANG',               'HOUGANG':'HOUGANG',
+  'JE':'JURONG EAST',           'JURONG EAST':'JURONG EAST',
+  'JW':'JURONG WEST',           'JURONG WEST':'JURONG WEST',
+  'KWN':'KALLANG/WHAMPOA',      'KALLANG/WHAMPOA':'KALLANG/WHAMPOA',
+  'KALLANG':'KALLANG/WHAMPOA',  'WHAMPOA':'KALLANG/WHAMPOA',
+  'MP':'MARINE PARADE',         'MARINE PARADE':'MARINE PARADE',
+  'PRC':'PASIR RIS',            'PASIR RIS':'PASIR RIS',
+  'PG':'PUNGGOL',               'PUNGGOL':'PUNGGOL',
+  'QT':'QUEENSTOWN',            'QUEENSTOWN':'QUEENSTOWN',
+  'SB':'SEMBAWANG',             'SEMBAWANG':'SEMBAWANG',
+  'SK':'SENGKANG',              'SENGKANG':'SENGKANG',
+  'SGN':'SERANGOON',            'SERANGOON':'SERANGOON',
+  'TAP':'TAMPINES',             'TAMPINES':'TAMPINES',
+  'TP':'TOA PAYOH',             'TOA PAYOH':'TOA PAYOH',
+  'WL':'WOODLANDS',             'WOODLANDS':'WOODLANDS',
+  'YS':'YISHUN',                'YISHUN':'YISHUN',
+  'TG':'TENGAH',                'TENGAH':'TENGAH',
 };
+
+// Normalise any town input → canonical DB town name using TOWN_CODE_MAP
+// To add a new town: add entries to TOWN_CODE_MAP above — nothing else needed
+function canonicalTown(t){
+  if(!t) return '';
+  return TOWN_CODE_MAP[t.trim().toUpperCase()] || t.trim().toUpperCase();
+}
+
+// Street→town index — populated once when DB loads (see _buildStreetTownIndex below)
+// Maps street_name (uppercase) → canonical town name
+// Used by getStreetsFromHDBProp and getBlocksFromHDBProp — no repeated DB.resale scans
+const _STREET_TOWN_IDX = new Map();
+function _buildStreetTownIndex(){
+  _STREET_TOWN_IDX.clear();
+  if(!DB.loaded) return;
+  for(const r of DB.resale){
+    if(r.street_name && r.town && !_STREET_TOWN_IDX.has(r.street_name)){
+      _STREET_TOWN_IDX.set(r.street_name, r.town);
+    }
+  }
+}
 
 function reverseStreet(streetRaw){
   if(!DB.loaded||!streetRaw)return null;
@@ -4078,6 +4104,7 @@ function showEV(result,params){
     ${warn12?`<div class="ev-warn">⚠ Based on last 12 months — not enough recent data. Treat as directional.<br><a href="https://wa.me/6597531657" target="_blank" style="color:var(--g)">Chat for a more accurate valuation →</a></div>`:''}
     ${sizeDisclaimer}
     ${floorDisclaimer}
+    ${(()=>{if(!params._floorAnomaly)return '';if(params._floorAnomaly==='high')return `<div class="ev-warn" style="margin-bottom:10px;border-color:rgba(255,80,80,.5);background:rgba(255,80,80,.06)">⚠ <strong>Floor ${params._floorAnomalyInput} does not exist</strong> — Block ${params.block} max is <strong>${params._floorAnomalyMax} floors</strong>. Estimate applied at highest tier <strong>${params._floorAnomalyTier}</strong>.</div>`;return `<div class="ev-warn" style="margin-bottom:10px;border-color:rgba(255,80,80,.5);background:rgba(255,80,80,.06)">⚠ <strong>Floor ${params._floorAnomalyInput} is invalid</strong> — applied lowest tier <strong>${params._floorAnomalyTier}</strong>.</div>`;})()}
     ${(()=>{
       if(!params._floorAnomaly) return '';
       if(params._floorAnomaly==='high')
@@ -4221,6 +4248,48 @@ function getBlocksForStreet(street,town,flatType){
     (!flatType||r.flat_type===flatType)
   ).map(r=>r.block))].sort((a,b)=>Number(a)-Number(b)||a.localeCompare(b));
 }
+// ── HDB_PROP-based helpers — uses TOWN_CODE_MAP + _STREET_TOWN_IDX, NO resale scans ──
+
+// All streets in a town that exist in HDB_PROP_KEYS
+// Uses _STREET_TOWN_IDX (built at DB load) — not DB.resale directly
+function getStreetsFromHDBProp(town){
+  if(!town) return [];
+  const canonical = canonicalTown(town);
+  // Collect all streets whose town matches via the pre-built index
+  const townStreets = new Set();
+  _STREET_TOWN_IDX.forEach((t, s) => { if(t === canonical) townStreets.add(s); });
+  // Filter to only streets that have at least one HDB_PROP entry
+  const propStreetSet = new Set(HDB_PROP_KEYS.map(k => k.split('|')[1]));
+  return [...townStreets].filter(s => propStreetSet.has(s)).sort();
+}
+
+// All blocks for a given street (from HDB_PROP), or all blocks in a town if no street
+// Street given → only blocks on that street
+// No street, town given → all HDB_PROP blocks in town (via _STREET_TOWN_IDX)
+function getBlocksFromHDBProp(street, town){
+  if(street){
+    const su = street.toUpperCase();
+    const blocks = [];
+    HDB_PROP_KEYS.forEach(k => {
+      const parts = k.split('|');
+      if(parts[1] === su) blocks.push(parts[0]);
+    });
+    return blocks.sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+  }
+  if(town){
+    const canonical = canonicalTown(town);
+    const townStreets = new Set();
+    _STREET_TOWN_IDX.forEach((t, s) => { if(t === canonical) townStreets.add(s); });
+    const blocks = [];
+    HDB_PROP_KEYS.forEach(k => {
+      const parts = k.split('|');
+      if(townStreets.has(parts[1])) blocks.push(parts[0]);
+    });
+    return [...new Set(blocks)].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+  }
+  return [];
+}
+
 function getFloorsForBlock(block,street,flatType){
   if(!DB.loaded||!block) return [];
   const storeys=[...new Set(DB.resale.filter(r=>
@@ -4248,7 +4317,8 @@ function getLeaseYearsForBlock(block,street,flatType){
 }
 function getStreetsForTown(town){
   if(!DB.loaded||!town) return [];
-  return [...new Set(DB.resale.filter(r=>r.town===town).map(r=>r.street_name))].sort();
+  const canonical = canonicalTown(town);
+  return [...new Set(DB.resale.filter(r=>r.town===canonical).map(r=>r.street_name))].sort();
 }
 function storeyRangeToFloors(storeys){
   const floors=new Set();
@@ -4353,10 +4423,12 @@ function buildHudForm(ctx){
   const flatType= ctx.flatType||'';
 
   const towns   = TOWNS;
-  const streets = town ? getStreetsForTown(town) : (street?[street]:[]);
-  const blocks  = getBlocksForStreet(street,town,flatType);
-  const storeys = block ? getFloorsForBlock(block,street,flatType) : [];
-  const floors  = storeyRangeToFloors(storeys);
+  // Streets and blocks from HDB_PROP (complete coverage, not transaction-limited)
+  const streets = town ? getStreetsFromHDBProp(town) : (street ? [street] : []);
+  const blocks  = getBlocksFromHDBProp(street, town);
+  const _allTiers=block?_getStoreyTiersAll(block,street):[];
+  const storeys=_allTiers.length?_allTiers:(block?getFloorsForBlock(block,street,flatType):[]);
+  const floors=_allTiers.length?(()=>{const fs=new Set();storeys.forEach(s=>{const m=s.match(/(\d+)\s+TO\s+(\d+)/i);if(m){for(let f=parseInt(m[1]);f<=parseInt(m[2]);f++)fs.add(f);}else{const n=parseInt(s);if(!isNaN(n))fs.add(n);}});return [...fs].sort((a,b)=>a-b);})():storeyRangeToFloors(storeys);
   const sizes   = getSizesForBlock(block,street,flatType);
   const leaseYrs= getLeaseYearsForBlock(block,street,flatType);
 
@@ -4367,7 +4439,7 @@ function buildHudForm(ctx){
   const streetOpts=blankOpt('select street')+(streets.length?streets.map(s=>opt(s,s,s===street)).join(''):`<option value="${street}">${street||'type below'}</option>`);
   const blockOpts=blankOpt('select block')+(blocks.length?blocks.map(b=>opt(b,'Blk '+b,b===block)).join(''):`<option value="${block}">${block?'Blk '+block:'type below'}</option>`);
   const ftOpts=blankOpt('flat type')+['1 ROOM','2 ROOM','3 ROOM','4 ROOM','5 ROOM','EXECUTIVE'].map(ft=>opt(ft,ft,ft===flatType)).join('');
-  const floorOpts=blankOpt('floor')+(floors.length?floors.map(f=>opt(f,'Floor '+f,f===ctx.floor)).join(''):'');
+  const floorOpts=blankOpt('select your floor')+(floors.length?floors.map(f=>opt(f,'Floor '+f,Number(f)===Number(ctx.floor))).join(''):'');
   const szInferred=ctx.sizeInferred?` <span class="hud-badge">⚠ ESTIMATED</span>`:ctx.sizeFromDB?` <span class="hud-badge">✓ FROM DB</span>`:'';
   const sizeOpts=blankOpt('floor area')+(sizes.length?sizes.map(s=>opt(s,s+' sqm',s===ctx.size)).join(''):`<option value="${ctx.size||''}">${ctx.size?ctx.size+' sqm (estimated)':'not found'}</option>`);
   const lyNote2=ctx.leaseYearMultiple?` <span class="hud-badge" style="color:var(--a)">⚠ MULTIPLE FOUND</span>`:ctx.leaseYearFromDB?` <span class="hud-badge">✓ AUTO</span>`:'';
@@ -4435,28 +4507,29 @@ function hudCascade(fid){
   const flatType= document.getElementById(fid+'-flattype')?.value||'';
 
   if(town){
-    const streets=getStreetsForTown(town);
-    const stSel=document.getElementById(fid+'-street');
-    if(stSel&&streets.length){
-      const cur=stSel.value;
-      stSel.innerHTML=`<option value="">— select street —</option>`+streets.map(s=>`<option value="${s}"${s===cur?' selected':''}>${s}</option>`).join('');
+    const streets = getStreetsFromHDBProp(town);
+    const stSel = document.getElementById(fid+'-street');
+    if(stSel && streets.length){
+      const cur = stSel.value;
+      stSel.innerHTML = `<option value="">— select street —</option>`+streets.map(s=>`<option value="${s}"${s===cur?' selected':''}>${s}</option>`).join('');
     }
   }
-  const blkSel=document.getElementById(fid+'-block');
-  if(blkSel&&(town||street)){
-    const blocks=getBlocksForStreet(street,town,flatType);
-    const cur=blkSel.value;
-    blkSel.innerHTML=`<option value="">— select block —</option>`+(blocks.length?blocks.map(b=>`<option value="${b}"${b===cur?' selected':''}>Blk ${b}</option>`).join(''):'<option value="">no blocks found</option>');
+  const blkSel = document.getElementById(fid+'-block');
+  if(blkSel && (town||street)){
+    // Street selected → only that street's blocks; no street → all town blocks
+    const blocks = getBlocksFromHDBProp(street, town);
+    const cur = blkSel.value;
+    blkSel.innerHTML = `<option value="">— select block —</option>`+(blocks.length?blocks.map(b=>`<option value="${b}"${b===cur?' selected':''}>Blk ${b}</option>`).join(''):'<option value="">no blocks found</option>');
   }
   if(block){
     const floorSel=document.getElementById(fid+'-floor');
     const sizeSel =document.getElementById(fid+'-size');
     const lySel   =document.getElementById(fid+'-lease');
-    const storeys=getFloorsForBlock(block,street,flatType);
-    const floors =storeyRangeToFloors(storeys);
+    const _cTiers=_getStoreyTiersAll(block,street);
+    const floors=_cTiers.length?(()=>{const fs=new Set();_cTiers.forEach(s=>{const m=s.match(/(\d+)\s+TO\s+(\d+)/i);if(m){for(let f=parseInt(m[1]);f<=parseInt(m[2]);f++)fs.add(f);}else{const n=parseInt(s);if(!isNaN(n))fs.add(n);}});return [...fs].sort((a,b)=>a-b);})():storeyRangeToFloors(getFloorsForBlock(block,street,flatType));
     const sizes  =getSizesForBlock(block,street,flatType);
     const lyrs   =getLeaseYearsForBlock(block,street,flatType);
-    if(floorSel&&floors.length)floorSel.innerHTML=`<option value="">— floor —</option>`+floors.map(f=>`<option value="${f}">Floor ${f}</option>`).join('');
+    if(floorSel&&floors.length){const _curF=floorSel.value;floorSel.innerHTML=`<option value="">— select your floor —</option>`+floors.map(f=>`<option value="${f}"${Number(f)===Number(_curF)?' selected':''}>Floor ${f}</option>`).join('');}
     if(sizeSel&&sizes.length) sizeSel.innerHTML=`<option value="">— sqm —</option>`+sizes.map(s=>`<option value="${s}">${s} sqm</option>`).join('');
     if(lySel&&lyrs.length)    lySel.innerHTML=`<option value="">— lease year —</option>`+lyrs.map(y=>`<option value="${y}">${y}</option>`).join('');
   }
@@ -13632,16 +13705,8 @@ function activateVoiceMode(){
   ]);
   harveyMsg(msg);speak(msg);
 
-  if(_iosWhisperMode){
-    micState='query';
-    setTimeout(()=>_iosWStartSession(),400);
-  } else {
-    micState='query';
-    try{recog?.abort();}catch(e){}
-    recogBusy=false;
-    clearTimeout(speechTimer);
-    setTimeout(()=>safeStart(),600);
-  }
+  if(_iosWhisperMode){micState='query';setTimeout(()=>_iosWStartSession(),400);}
+  else{micState='query';try{recog?.abort();}catch(e){}recogBusy=false;clearTimeout(speechTimer);setTimeout(()=>safeStart(),600);}
 }
 
 function deactivateVoiceMode(silent){
@@ -13791,175 +13856,110 @@ async function transcribeAudio(blob){
   return r.text.trim();
 }
 function _toggleIosWhisper(){
-  _iosWhisperMode=!_iosWhisperMode;
-  _initIosWhisperBtn();
-  if(_iosWhisperMode){
-    try{recog?.abort();}catch(e){}recogBusy=false;
-    harveyMsg('iOS whisper mode <strong>ON</strong>, sir. Tap the mic button to start — I will auto-detect when you finish speaking.');
-  } else {
-    _iosWStopSession();
-    harveyMsg('iOS whisper mode <strong>OFF</strong>, sir.');
-  }
+  _iosWhisperMode=!_iosWhisperMode;_initIosWhisperBtn();
+  if(_iosWhisperMode){try{recog?.abort();}catch(e){}recogBusy=false;harveyMsg('iOS whisper mode <strong>ON</strong>, sir. Tap mic — I detect when you stop speaking automatically.');}
+  else{_iosWStopSession();harveyMsg('iOS whisper mode <strong>OFF</strong>, sir.');}
 }
 function _initIosWhisperBtn(){
-  const b=document.getElementById('mbtn-ios-whisper');
-  if(!b)return;
+  const b=document.getElementById('mbtn-ios-whisper');if(!b)return;
   b.textContent=_iosWhisperMode?'📱 IOS ON':'📱 IOS';
-  b.style.color=_iosWhisperMode?'var(--a)':'';
-  b.style.borderColor=_iosWhisperMode?'var(--a)':'';
+  b.style.color=_iosWhisperMode?'var(--a)':'';b.style.borderColor=_iosWhisperMode?'var(--a)':'';
 }
 window.addEventListener('load',()=>setTimeout(_initIosWhisperBtn,400));
-
 async function _iosWEnsureModel(){
   if(_wReady)return true;
   if(vsTxt)vsTxt.textContent='LOADING WHISPER... (~20s first time)';
-  try{
-    await loadWhisper(p=>{
-      if(p.status==='downloading'&&vsTxt)
-        vsTxt.textContent='WHISPER '+(p.progress?Math.round(p.progress)+'%':'loading...');
-    });
-    return true;
-  }catch(e){if(vsTxt)vsTxt.textContent='Whisper load failed';return false;}
+  try{await loadWhisper(p=>{if(p.status==='downloading'&&vsTxt)vsTxt.textContent='WHISPER '+(p.progress?Math.round(p.progress)+'%':'loading...');});return true;}
+  catch(e){if(vsTxt)vsTxt.textContent='Whisper load failed';return false;}
 }
-
 async function _iosWOpenStream(){
   if(_iosWStream&&_iosWStream.active)return true;
-  try{
-    _iosWStream=await navigator.mediaDevices.getUserMedia({
-      audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}
-    });
-    return true;
-  }catch(e){if(vsTxt)vsTxt.textContent='Mic access denied';return false;}
+  try{_iosWStream=await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});return true;}
+  catch(e){if(vsTxt)vsTxt.textContent='Mic access denied';return false;}
 }
-
 async function _iosWStartSession(){
   if(_iosWActive||_iosWProcessing)return;
-  // Load model first — show progress
   if(vsTxt)vsTxt.textContent='IOS WHISPER — LOADING...';
   const ok1=await _iosWEnsureModel();if(!ok1)return;
   const ok2=await _iosWOpenStream();if(!ok2)return;
-  _iosWActive=true;
-  micState='query';
-  voiceMode=true;  // mark voice active so vsBar shows
-  vsBar.style.display='flex';
-  vmBadge.classList.add('active');
+  _iosWActive=true;micState='query';voiceMode=true;
+  vsBar.style.display='flex';vmBadge.classList.add('active');
   if(mbEl)mbEl.classList.add('active');
   if(vsTxt)vsTxt.textContent='IOS WHISPER — LISTENING...';
   _iosWListenLoop();
 }
-
 function _iosWStopSession(){
-  _iosWActive=false;
-  clearTimeout(_iosWVADTimer);_iosWVADTimer=null;
+  _iosWActive=false;clearTimeout(_iosWVADTimer);_iosWVADTimer=null;
   if(_iosWMediaRec&&_iosWMediaRec.state!=='inactive'){try{_iosWMediaRec.stop();}catch(e){}}
   _iosWMediaRec=null;_iosWChunks=[];_iosWRecording=false;
   if(_iosWCtx){try{_iosWCtx.close();}catch(e){}}_iosWCtx=null;_iosWAnalyser=null;
   if(_iosWStream){_iosWStream.getTracks().forEach(t=>t.stop());_iosWStream=null;}
   if(mbEl)mbEl.classList.remove('active');
-  voiceMode=false;
-  vmBadge.classList.remove('active');
-  vsBar.style.display='none';
-  micState='off';
-  if(vsTxt&&!_iosWProcessing)vsTxt.textContent='IOS WHISPER — TAP MIC TO START';
+  voiceMode=false;vmBadge.classList.remove('active');vsBar.style.display='none';
+  micState='off';if(vsTxt&&!_iosWProcessing)vsTxt.textContent='IOS WHISPER — TAP MIC TO START';
 }
-
 async function _iosWListenLoop(){
   if(!_iosWActive||_iosWProcessing)return;
-  if(!_iosWStream||!_iosWStream.active){
-    const ok=await _iosWOpenStream();if(!ok){_iosWActive=false;return;}
+  if(!_iosWStream||!_iosWStream.active){const ok=await _iosWOpenStream();if(!ok){_iosWActive=false;return;}}
+  if(_speakBusy){
+    if(!window._iosWWaitStart)window._iosWWaitStart=Date.now();
+    if(Date.now()-window._iosWWaitStart>8000){_speakBusy=false;_srPausedForTTS=false;window._iosWWaitStart=0;vdbgLog('iOS whisper: forced past stuck _speakBusy','var(--r)');}
+    else{if(vsTxt)vsTxt.textContent='HARVEY SPEAKING...';_iosWVADTimer=setTimeout(()=>_iosWListenLoop(),250);return;}
   }
-  // Wait while Harvey is speaking — poll until clear
-  if(_speakBusy||_srPausedForTTS){
-    if(vsTxt)vsTxt.textContent='HARVEY SPEAKING...';
-    _iosWVADTimer=setTimeout(()=>_iosWListenLoop(),300);
-    return;
-  }
+  window._iosWWaitStart=0;
   if(vsTxt)vsTxt.textContent='LISTENING... (speak now)';
-  _iosWChunks=[];
-  _iosWRecording=true;
-  // Set up VAD analyser
+  _iosWChunks=[];_iosWRecording=true;
   try{
-    if(!_iosWCtx||_iosWCtx.state==='closed'){
-      _iosWCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
-    }
+    if(!_iosWCtx||_iosWCtx.state==='closed')_iosWCtx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
     const src=_iosWCtx.createMediaStreamSource(_iosWStream);
-    _iosWAnalyser=_iosWCtx.createAnalyser();
-    _iosWAnalyser.fftSize=256;
-    src.connect(_iosWAnalyser);
+    _iosWAnalyser=_iosWCtx.createAnalyser();_iosWAnalyser.fftSize=256;src.connect(_iosWAnalyser);
   }catch(e){_iosWAnalyser=null;}
   const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':'audio/mp4';
-  try{_iosWMediaRec=new MediaRecorder(_iosWStream,{mimeType:mime});}
-  catch(e){_iosWMediaRec=new MediaRecorder(_iosWStream);}
+  try{_iosWMediaRec=new MediaRecorder(_iosWStream,{mimeType:mime});}catch(e){_iosWMediaRec=new MediaRecorder(_iosWStream);}
   _iosWMediaRec.ondataavailable=e=>{if(e.data&&e.data.size>0)_iosWChunks.push(e.data);};
   _iosWMediaRec.start(100);
-  // VAD poll
   let _spDetected=false,_silStart=0;
-  const _THRESH=0.010,_SIL_MS=2000,_MAX_MS=15000,_MIN_MS=300;
-  const _t0=Date.now();
+  const _THRESH=0.010,_SIL_MS=2000,_MAX_MS=15000,_MIN_MS=300,_t0=Date.now();
   const _poll=setInterval(()=>{
     if(!_iosWRecording||!_iosWActive){clearInterval(_poll);return;}
     const elapsed=Date.now()-_t0;
     let rms=0.1;
-    if(_iosWAnalyser){
-      const buf=new Uint8Array(_iosWAnalyser.frequencyBinCount);
-      _iosWAnalyser.getByteTimeDomainData(buf);
-      let sum=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v;}
-      rms=Math.sqrt(sum/buf.length);
-    }
-    if(rms>_THRESH){
-      _spDetected=true;_silStart=0;
-      if(vsTxt)vsTxt.textContent='SPEAKING...';
-    } else if(_spDetected&&elapsed>_MIN_MS){
+    if(_iosWAnalyser){const buf=new Uint8Array(_iosWAnalyser.frequencyBinCount);_iosWAnalyser.getByteTimeDomainData(buf);let sum=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;sum+=v*v;}rms=Math.sqrt(sum/buf.length);}
+    if(rms>_THRESH){_spDetected=true;_silStart=0;if(vsTxt)vsTxt.textContent='SPEAKING...';}
+    else if(_spDetected&&elapsed>_MIN_MS){
       if(!_silStart)_silStart=Date.now();
-      const silDur=Date.now()-_silStart;
+      if(Date.now()-_silStart>=_SIL_MS){clearInterval(_poll);_iosWSendUtterance();return;}
       if(vsTxt)vsTxt.textContent='PAUSE DETECTED — SENDING...';
-      if(silDur>=_SIL_MS){clearInterval(_poll);_iosWSendUtterance();return;}
     }
     if(elapsed>=_MAX_MS){clearInterval(_poll);if(_spDetected)_iosWSendUtterance();else _iosWListenLoop();}
   },80);
 }
-
 async function _iosWSendUtterance(){
   if(!_iosWRecording)return;
   _iosWRecording=false;_iosWProcessing=true;
-  if(vsTxt)vsTxt.textContent='PROCESSING...';
-  if(mbEl)mbEl.classList.remove('active');
+  if(vsTxt)vsTxt.textContent='PROCESSING...';if(mbEl)mbEl.classList.remove('active');
   await new Promise(res=>{
     if(!_iosWMediaRec||_iosWMediaRec.state==='inactive'){res();return;}
-    _iosWMediaRec.onstop=res;
-    try{_iosWMediaRec.stop();}catch(e){res();}
+    _iosWMediaRec.onstop=res;try{_iosWMediaRec.stop();}catch(e){res();}
   });
   try{
     if(_iosWChunks.length>0){
-      const blob=new Blob(_iosWChunks,{type:_iosWMediaRec?.mimeType||'audio/webm'});
-      _iosWChunks=[];
+      const blob=new Blob(_iosWChunks,{type:_iosWMediaRec?.mimeType||'audio/webm'});_iosWChunks=[];
       if(blob.size>2000){
         const text=await transcribeAudio(blob);
         if(text&&text.trim().length>1){
-          const norm=normaliseVoiceInput(text.trim());
-          const final=normalizeSpeech(norm);
-          if(isSilenceTTS(norm)){
-            stopSpeech();
-          } else if(isDeactivationPhrase(norm)||/^(stop mic|mic off|stop whisper|whisper off|stop recording)$/i.test(norm.trim())){
-            _iosWStopSession();
-            _iosWProcessing=false;return;
-          } else {
-            ciEl.value=final;
-            if(vsTxt)vsTxt.textContent='> '+final.slice(0,50);
-            handleInput();
-          }
+          const norm=normaliseVoiceInput(text.trim());const finalTxt=normalizeSpeech(norm);
+          if(vsTxt)vsTxt.textContent='HEARD: '+finalTxt.slice(0,40);
+          if(isSilenceTTS(norm)){stopSpeech();}
+          else if(isDeactivationPhrase(norm)||/^(stop mic|mic off|stop whisper|whisper off|stop recording)$/i.test(norm.trim())){_iosWStopSession();_iosWProcessing=false;return;}
+          else{ciEl.value=finalTxt;handleInput();}
         }
       }
     }
   }catch(e){if(vsTxt)vsTxt.textContent='IOS WHISPER — error, retrying...';}
   _iosWProcessing=false;
-  // Restart listen loop immediately if Harvey isn't speaking yet
-  // If Harvey starts speaking, _iosWListenLoop will wait internally
-  if(_iosWActive&&_iosWhisperMode){
-    _iosWListenLoop();
-  }
+  if(_iosWActive&&_iosWhisperMode)_iosWListenLoop();
 }
-
 async function initWhisperMode(){
   if(_whisperInitDone)return;
   if(vsTxt)vsTxt.textContent='LOADING WHISPER... (first time ~30s)';
@@ -15045,18 +15045,7 @@ function safeStart(){
 }
 
 function toggleMic(){
-  if(_iosWhisperMode){
-    if(_iosWActive||_iosWProcessing){
-      // Tap while active/processing = stop
-      _iosWStopSession();
-      _iosWProcessing=false;
-      if(vsTxt)vsTxt.textContent='IOS WHISPER — TAP MIC TO START';
-    } else {
-      // Tap while idle = start listening session
-      _iosWStartSession();
-    }
-    return;
-  }
+  if(_iosWhisperMode){if(_iosWActive||_iosWProcessing){_iosWStopSession();_iosWProcessing=false;}else{_iosWStartSession();}return;}
   if(_whisperMode&&_wReady){if(_ptbHeld){stopPTBRecording();return;}startPTBRecording();return;}
   if(!SR){harveyMsg('Voice input is not supported on this browser, sir. Please try Chrome on Android or Safari on iOS 14.5 or later.');return;}
   if(voiceMode){deactivateVoiceMode();return;}
