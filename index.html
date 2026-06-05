@@ -6363,6 +6363,17 @@ async function _handleInputInner(raw){
 
   if(mode==='ev_waiting'||mode==='srch_waiting'){
 
+    // ── EV CARD: postal typed → resolve block+street+town and merge into ctx ──
+    if(parsed._postalCode && parsed.block && parsed.street){
+      // Carry postal into workingCtx so EV card pre-fills correctly
+      workingCtx._postalCode = parsed._postalCode;
+      ctx._postalCode = parsed._postalCode;
+      // If postal resolved block+street but ctx didn't have them yet, inject
+      if(!ctx.block) ctx.block = parsed.block;
+      if(!ctx.street) ctx.street = parsed.street;
+      if(!ctx.town && parsed.town) ctx.town = parsed.town;
+    }
+
     // ── EV CARD: bare street or town typed → treat as EV field fill ──
     if(mode==='ev_waiting' && !parsed.street && !parsed.town){
       const _evRaw=raw.trim();
@@ -6387,7 +6398,7 @@ async function _handleInputInner(raw){
     }
 
     const isReaction=/low|high|wrong|seems|that's|thats|really|sure|correct|accurate|right|off|expect|thought|reckon|feel|think|why|how|cant|can't|less|more|not right|not correct|disagree/i.test(raw);
-    const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice;
+    const hasNewInfo=parsed.town||parsed.flatType||parsed.street||parsed.block||parsed.floor||parsed.size||parsed.leaseYear||parsed.maxPrice||parsed.minPrice||parsed._postalCode;
 
     const midSent=harveyKnows.sentiment(raw);
     if(midSent.hostile&&!hasNewInfo){
@@ -8174,9 +8185,10 @@ async function _handleInputInner(raw){
   // Fires when raw is just a 6-digit postal (no EV/resale/analysis intent)
   // bypasses all intermediate routing and shows block+street immediately
   const _isPurePostal=parsed._postalCode&&
-    /^\s*\d{6}\s*$/.test(raw.trim())||
-    /^\s*(?:postal\s*code?|postcode)?\s*\d{6}\s*$/i.test(raw.trim());
-  if(_isPurePostal&&ctx.block&&ctx.street){
+    (/^\s*\d{6}\s*$/.test(raw.trim())||
+    /^\s*(?:postal\s*code?|postcode)?\s*\d{6}\s*$/i.test(raw.trim()));
+  // Don't intercept postal when EV/search card is open — let ev_waiting handle it
+  if(_isPurePostal&&ctx.block&&ctx.street&&mode!=='ev_waiting'&&mode!=='srch_waiting'){
     const _ppTown=ctx.town||workingCtx.townCtx||'';
     speak(rand(['Searching, sir.','On it, sir.','Right away, sir.']));
     await handleBlockDetail(ctx.block,ctx.street,_ppTown,{...ctx,floor:null});
