@@ -6295,6 +6295,16 @@ async function _handleInputInner(raw){
   }
 
   const parsed=parseQuery(normalizeSpeech(raw));
+
+  // ── POSTAL INTERCEPT — fires immediately, before all other routing ──
+  // Pure 6-digit input (text or speech) → straight to block detail, no intermediate steps
+  if(parsed._postalCode && parsed.block && parsed.street && mode!=='ev_waiting' && mode!=='srch_waiting'){
+    const _pTown=parsed.town||workingCtx.townCtx||convCtx.town||'';
+    speak(rand(['Searching, sir.','On it, sir.','Right away, sir.']));
+    await handleBlockDetail(parsed.block, parsed.street, _pTown, {block:parsed.block,street:parsed.street,town:_pTown,_postalCode:parsed._postalCode,floor:null});
+    loading=false;sbEl.disabled=false;return;
+  }
+
   // If user named only a town (no street number in input), clear any guessed street
   if(parsed.town&&parsed.street&&!parsed._streetExplicit){
     const _mainHasStreetNum=/(ROAD|STREET|AVENUE|DRIVE|CLOSE|CRESCENT|GARDENS|GDNS|LINK|LANE|WALK|RD|ST|AVE|DR|CL|CRES|LOR|JLN|BT|UPP)/i.test(raw);
@@ -8184,16 +8194,7 @@ async function _handleInputInner(raw){
   // ── Postal-only input → jump straight to block detail ──
   // Fires when raw is just a 6-digit postal (no EV/resale/analysis intent)
   // bypasses all intermediate routing and shows block+street immediately
-  const _isPurePostal=parsed._postalCode&&
-    (/^\s*\d{6}\s*$/.test(raw.trim())||
-    /^\s*(?:postal\s*code?|postcode)?\s*\d{6}\s*$/i.test(raw.trim()));
-  // Don't intercept postal when EV/search card is open — let ev_waiting handle it
-  if(_isPurePostal&&ctx.block&&ctx.street&&mode!=='ev_waiting'&&mode!=='srch_waiting'){
-    const _ppTown=ctx.town||workingCtx.townCtx||'';
-    speak(rand(['Searching, sir.','On it, sir.','Right away, sir.']));
-    await handleBlockDetail(ctx.block,ctx.street,_ppTown,{...ctx,floor:null});
-    loading=false;sbEl.disabled=false;return;
-  }
+  // Postal pure intercept moved to immediately after parseQuery (above)
 
   if(ctx.isEV||/valuat|estimate|worth|value|how much|price of|check value/i.test(raw)){
     ctx.isEV=true;
