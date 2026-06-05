@@ -793,9 +793,8 @@ function getHDBProp(block, street){
     max_floor_lvl:mf, year_completed:yr, total_units:du,
     commercial:!!(fl&1), market_hawker:!!(fl&2),
     multistorey_carpark:!!(fl&4), precinct_pavilion:!!(fl&8),
-    ft_1room:r1||0, ft_2room:r2||0, ft_3room:r3||0,
-    ft_4room:r4||0, ft_5room:r5||0, ft_exec:ex||0,
-    ft_multigen:mg||0, ft_studio:st||0,
+    ft_1room:r1||0, ft_2room:r2||0, ft_3room:r3||0, ft_4room:r4||0,
+    ft_5room:r5||0, ft_exec:ex||0, ft_multigen:mg||0, ft_studio:st||0,
     multigen:!!(fl&16), exec_sold:!!(fl&32), studio:!!(fl&64)
   };
 }
@@ -1205,14 +1204,14 @@ function _getMaxSqm(block, street, flatType){
   if(!DB.loaded) return null;
   let recs=DB.resale.filter(r=>(!block||r.block===block)&&(!street||r.street_name===street));
   if(flatType&&flatType!=='ALL TYPES') recs=recs.filter(r=>r.flat_type===flatType);
-  // If no txn data but HDB prop shows this flat type exists, try 5-year window
   if(!recs.length&&block&&street&&flatType&&flatType!=='ALL TYPES'){
-    const _hdbOk=getFlatTypesFromHDBProp(block,street).includes(flatType);
-    if(_hdbOk){
-      // Expand to all-time for size hint
-      const _allRecs=DB.resale.filter(r=>r.block===block&&r.street_name===street&&r.flat_type===flatType);
-      if(_allRecs.length) recs=_allRecs;
-      else return {sqm:null,flatType,noTxnButHDBConfirmed:true};
+    // Try 5-year window
+    const _5yr=DB.resale.filter(r=>r.block===block&&r.street_name===street&&r.flat_type===flatType);
+    if(_5yr.length){recs=_5yr;}
+    else{
+      // HDB confirms this flat type exists but no txn data at all
+      if(getFlatTypesFromHDBProp(block,street).includes(flatType))
+        return {sqm:null,flatType,noTxnButHDBConfirmed:true};
     }
   }
   if(!recs.length) return null;
@@ -1366,9 +1365,9 @@ function _answerHDBQuery(raw, block, street, town, flatType){
     const isMin=/\b(smallest|minimum|min sqm|least space)\b/i.test(raw);
     const result=isMin?_getMinSqm(_b,_s,_ft):_getMaxSqm(_b,_s,_ft);
     if(result){
-      if(result.noTxnButHDBConfirmed){
-        const _hdbNote=`Block <strong>${_b||''}</strong> on ${esc(_s||'')} has <strong>${result.flatType}</strong> units according to HDB records — but I have no visibility on their size. No resale transactions found. You may wish to check HDB InfoWEB for actual unit sizes.`;
-        return {answered:true,msg:_hdbNote,spoken:`HDB records confirm ${result.flatType} units in Block ${_b} but I have no size data from resale transactions.`,chips:[{label:'ESTIMATE VALUATION',val:`estimate value block ${_b} ${_s} ${result.flatType}`}]};
+      if(result&&result.noTxnButHDBConfirmed){
+        const _n=`Block <strong>${_b||''}</strong> on ${esc(_s||'')} offers <strong>${result.flatType}</strong> per HDB records but I have no resale transaction data to confirm the unit size. You may wish to check HDB InfoWEB for unit sizes.`;
+        return {answered:true,msg:_n,spoken:`HDB confirms ${result.flatType} in Block ${_b} but I have no size data.`,chips:[{label:'ESTIMATE VALUATION',val:`estimate value block ${_b} ${_s} ${result.flatType}`}]};
       }
       const label=isMin?'Smallest':'Largest';
       const msg=`${label} unit found${_b?' in Block <strong>'+_b+'</strong>':''} on ${_s?esc(_s):'this street'}: <strong>${result.sqm} sqm</strong> — ${esc(result.flatType||'')}${result.model?' ('+esc(result.model)+')':''}, Block <strong>${result.block}</strong>.`;
@@ -1418,11 +1417,7 @@ function _answerHDBQuery(raw, block, street, town, flatType){
     if(_b&&_s){
       const _allRecs=DB.resale.filter(r=>r.block===_b&&r.street_name===_s);
       const _ftypes=[...new Set(_allRecs.map(r=>r.flat_type).filter(Boolean))].sort();
-      const _hdbFts=getFlatTypesFromHDBProp(_b,_s);
-      const _hdbOnly=_hdbFts.filter(t=>!_ftypes.includes(t));
-      const _ftAll=_hdbFts.length?_hdbFts:_ftypes;
-      const _msg=`Block <strong>${_b}</strong> on ${esc(_s)} offers <strong>${_ftAll.join(', ')}</strong> according to HDB records.${_hdbOnly.length?' ('+_hdbOnly.join(', ')+' found in HDB data but no recent resale transactions available)':''}${_ftypes.length?' Resale data covers: '+_ftypes.join(', ')+'.':''}`;
-      const _dummy_msg=`I can see <strong>${_ftypes.length}</strong> flat type${_ftypes.length!==1?'s':''} transacted in Block <strong>${_b}</strong> (${_ftypes.join(', ')}), sir, but the exact total dwelling unit count per floor isn't in the resale dataset. For that I'd suggest checking HDB InfoWEB.`;
+      const _msg=`I can see <strong>${_ftypes.length}</strong> flat type${_ftypes.length!==1?'s':''} transacted in Block <strong>${_b}</strong> (${_ftypes.join(', ')}), sir, but the exact total dwelling unit count per floor isn't in the resale dataset. For that I'd suggest checking HDB InfoWEB.`;
       return {answered:true,msg:_msg,spoken:`Block ${_b} has ${_ftypes.length} flat types on record: ${_ftypes.join(', ')}. For exact dwelling unit count, check HDB InfoWEB, sir.`,chips:[{label:`BLK ${_b} DETAIL`,val:`block ${_b} ${_s}`}]};
     }
   }
@@ -4392,6 +4387,36 @@ function getBlocksFromHDBProp(street, town){
     return [...new Set(blocks)].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
   }
   return [];
+}
+
+// Ground truth flat types from HDB records (sold unit counts)
+function getFlatTypesFromHDBProp(block,street){
+  const p=getHDBProp(String(block).toUpperCase(),String(street).toUpperCase());
+  if(!p) return [];
+  const t=[];
+  if(p.ft_1room>0) t.push('1 ROOM');
+  if(p.ft_2room>0) t.push('2 ROOM');
+  if(p.ft_3room>0) t.push('3 ROOM');
+  if(p.ft_4room>0) t.push('4 ROOM');
+  if(p.ft_5room>0) t.push('5 ROOM');
+  if(p.ft_exec>0)  t.push('EXECUTIVE');
+  if(p.ft_multigen>0) t.push('MULTI-GENERATION');
+  if(p.ft_studio>0) t.push('STUDIO APARTMENT');
+  return t;
+}
+
+// Best size for flat type — 24m window, fallback to 5yr, fallback to HDB-only flag
+function getBestSizeForFlatType(block,street,flatType){
+  if(!DB.loaded||!block||!street||!flatType) return null;
+  const _b=String(block).toUpperCase(),_s=String(street).toUpperCase();
+  const now=new Date();
+  function cutoff(mo){const d=new Date(now);d.setMonth(d.getMonth()-mo);return d.toISOString().slice(0,7);}
+  let recs=DB.resale.filter(r=>r.block===_b&&r.street_name===_s&&r.flat_type===flatType&&r.month>=cutoff(24));
+  if(!recs.length) recs=DB.resale.filter(r=>r.block===_b&&r.street_name===_s&&r.flat_type===flatType&&r.month>=cutoff(60));
+  if(recs.length) return {sqm:Math.max(...recs.map(r=>Number(r.floor_area_sqm)||0)),source:'resale'};
+  const hdbOk=getFlatTypesFromHDBProp(_b,_s).includes(flatType);
+  if(hdbOk) return {sqm:null,source:'hdb_only',noTxnButHDBConfirmed:true};
+  return null;
 }
 
 function getFloorsForBlock(block,street,flatType){
@@ -15112,6 +15137,9 @@ async function handleBlockDetail(block, street, town, ctx){
 
   // Flat types available
   const _ftSet=[...new Set(_recs.map(r=>r.flat_type))].sort();
+  const _hdbFtSet=getFlatTypesFromHDBProp(block,street);
+  const _hdbFtMissing=_hdbFtSet.filter(t=>!_ftSet.includes(t));
+  const _ftDisplay=_hdbFtSet.length?_hdbFtSet:_ftSet;
 
   // Price stats from recent
   const _prices=_recent.map(r=>Number(r.resale_price)).filter(p=>p>0);
@@ -15172,7 +15200,7 @@ async function handleBlockDetail(block, street, town, ctx){
 
   // Follow-up chips
   const _dir='highest';
-  const _ftChips=_ftSet.slice(0,4).map(ft=>({
+  const _ftChips=(_ftDisplay||_ftSet).slice(0,4).map(ft=>({
     label:`${ft} HIGHEST`,val:`highest ${ft.toLowerCase()} block ${_b}${_s?' '+_s:''}`
   }));
   const _aftChips=[
@@ -15190,7 +15218,7 @@ async function handleBlockDetail(block, street, town, ctx){
   ];
 
   setTimeout(()=>harveyMsg(rand([
-    `Block <strong>${esc(_b)}</strong> has <strong>${_ftDisplay.length||_ftSet.length}</strong> flat type${(_ftDisplay.length||_ftSet.length)!==1?'s':''} — ${_ftSet.join(', ')}. Floors ${_floorStr}. ${_prices.length?`Average price <strong style="color:var(--g)">${fmtP(_avgP)}</strong> over the last 2 years. `:''}What would you like to know, sir?`,
+    `Block <strong>${esc(_b)}</strong> has <strong>${(_ftDisplay||_ftSet).length}</strong> flat type${(_ftDisplay||_ftSet).length!==1?'s':''} — ${_ftSet.join(', ')}. Floors ${_floorStr}. ${_prices.length?`Average price <strong style="color:var(--g)">${fmtP(_avgP)}</strong> over the last 2 years. `:''}What would you like to know, sir?`,
     `There are <strong>${_recent.length}</strong> transactions in the last 24 months for Block <strong>${esc(_b)}</strong>, sir. Highest floor: <strong>${_maxFloor||'—'}</strong>. What are we after?`,
   ]),_aftChips),800);
   if(_shortMode){
