@@ -8170,6 +8170,19 @@ async function _handleInputInner(raw){
   }
   if(parsed._postalCode) ctx._postalCode=parsed._postalCode;
 
+  // ── Postal-only input → jump straight to block detail ──
+  // Fires when raw is just a 6-digit postal (no EV/resale/analysis intent)
+  // bypasses all intermediate routing and shows block+street immediately
+  const _isPurePostal=parsed._postalCode&&
+    /^\s*\d{6}\s*$/.test(raw.trim())||
+    /^\s*(?:postal\s*code?|postcode)?\s*\d{6}\s*$/i.test(raw.trim());
+  if(_isPurePostal&&ctx.block&&ctx.street){
+    const _ppTown=ctx.town||workingCtx.townCtx||'';
+    speak(rand(['Searching, sir.','On it, sir.','Right away, sir.']));
+    await handleBlockDetail(ctx.block,ctx.street,_ppTown,{...ctx,floor:null});
+    loading=false;sbEl.disabled=false;return;
+  }
+
   if(ctx.isEV||/valuat|estimate|worth|value|how much|price of|check value/i.test(raw)){
     ctx.isEV=true;
     // Fix #10: restore working context before checking what's missing
