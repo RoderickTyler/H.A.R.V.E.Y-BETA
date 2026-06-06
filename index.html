@@ -4633,6 +4633,89 @@ function buildHudForm(ctx){
 }
 
 
+// ── HDB Info card — shows full HDB property data for a block or street ──
+function showHDBInfo(block, street, town){
+  const _b=block?(String(block).toUpperCase()):'';
+  const _s=street?(String(street).toUpperCase()):'';
+  const _t=town||workingCtx.townCtx||convCtx.town||'';
+
+  function _yn(v){return v?'<span style="color:var(--g)">YES</span>':'<span style="color:var(--t3)">NO</span>';}
+  function _num(v){return (v>0)?`<span style="color:var(--c)">${v}</span>`:`<span style="color:var(--t3)">0</span>`;}
+
+  function _rowHtml(p,blk,st){
+    return `<tr style="border-bottom:1px solid rgba(0,210,255,.07)">
+      <td style="padding:4px 8px;color:var(--c);white-space:nowrap">BLK ${blk}</td>
+      <td style="padding:4px 8px;color:var(--t2);white-space:nowrap">${st}</td>
+      <td style="padding:4px 8px;text-align:center">${p.max_floor_lvl||'—'}</td>
+      <td style="padding:4px 8px;text-align:center">${p.year_completed||'—'}</td>
+      <td style="padding:4px 8px;text-align:center">${p.total_units||'—'}</td>
+      <td style="padding:4px 8px;text-align:center">${_num(p.ft_1room)}</td>
+      <td style="padding:4px 8px;text-align:center">${_num(p.ft_2room)}</td>
+      <td style="padding:4px 8px;text-align:center">${_num(p.ft_3room)}</td>
+      <td style="padding:4px 8px;text-align:center">${_num(p.ft_4room)}</td>
+      <td style="padding:4px 8px;text-align:center">${_num(p.ft_5room)}</td>
+      <td style="padding:4px 8px;text-align:center">${_num(p.ft_exec)}</td>
+      <td style="padding:4px 8px;text-align:center">${_yn(p.commercial)}</td>
+      <td style="padding:4px 8px;text-align:center">${_yn(p.multistorey_carpark)}</td>
+      <td style="padding:4px 8px;text-align:center">${_yn(p.market_hawker)}</td>
+      <td style="padding:4px 8px;text-align:center">${_yn(p.precinct_pavilion)}</td>
+    </tr>`;
+  }
+
+  const _thStyle='padding:4px 8px;color:var(--a);font-size:8px;letter-spacing:1px;white-space:nowrap;border-bottom:1px solid rgba(0,210,255,.15)';
+  const _thead=`<tr>
+    <th style="${_thStyle}">BLK</th><th style="${_thStyle}">STREET</th>
+    <th style="${_thStyle}">MAX FL</th><th style="${_thStyle}">BUILT</th>
+    <th style="${_thStyle}">UNITS</th><th style="${_thStyle}">1RM</th>
+    <th style="${_thStyle}">2RM</th><th style="${_thStyle}">3RM</th>
+    <th style="${_thStyle}">4RM</th><th style="${_thStyle}">5RM</th>
+    <th style="${_thStyle}">EXEC</th><th style="${_thStyle}">COMM</th>
+    <th style="${_thStyle}">MSCP</th><th style="${_thStyle}">MKT</th>
+    <th style="${_thStyle}">PVLN</th>
+  </tr>`;
+
+  let rows='', title='', chips=[];
+
+  if(_b && _s){
+    // Single block
+    const p=getHDBProp(_b,_s);
+    if(!p){
+      harveyMsg(`No HDB property data found for Block <strong>${_b} ${_s}</strong>, sir.`);
+      return;
+    }
+    rows=_rowHtml(p,_b,_s);
+    title=`HDB PROPERTY DATA · BLK ${_b} ${_s}`;
+    chips=[{label:`BLK ${_b} DETAIL`,val:`block ${_b} ${_s}`}];
+    speak(`HDB data for Block ${_b} on ${_s}. Built ${p.year_completed}, ${p.max_floor_lvl} floors, ${p.total_units} units.`);
+  } else if(_s){
+    // All blocks on a street
+    const _blks=getBlocksFromHDBProp(_s,'');
+    if(!_blks.length){
+      harveyMsg(`No HDB data found for street <strong>${_s}</strong>, sir.`);
+      return;
+    }
+    rows=_blks.map(b=>{const p=getHDBProp(b,_s);return p?_rowHtml(p,b,_s):'';}).filter(Boolean).join('');
+    title=`HDB PROPERTY DATA · ${_s} · ${_blks.length} BLOCKS`;
+    chips=[{label:`← ${_s.split(' ').slice(0,3).join(' ')}`,val:`street ${_s}`}];
+    speak(`HDB data for ${_s}. ${_blks.length} blocks found.`);
+  } else {
+    harveyMsg(`HDB property info is unavailable at town level, sir. Please narrow to a street or block — for example: <em>hdb info Clementi West Street 1</em> or <em>hdb info block 322 Sembawang Close</em>.`,
+      [{label:'ENTER STREET',val:''}]);
+    return;
+  }
+
+  const card=`<span class="mlbl">// ${title}</span>
+<div style="overflow-x:auto;overflow-y:auto;max-height:420px;margin-top:8px;
+  background:rgba(0,10,20,.6);border:1px solid rgba(0,210,255,.12);border-radius:4px">
+  <table style="border-collapse:collapse;font-family:var(--mono);font-size:9px;min-width:100%;width:max-content">
+    <thead style="position:sticky;top:0;background:rgba(0,15,30,.95)">${_thead}</thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`;
+
+  harveyMsg(card, chips);
+}
+
 function hudPostalLookup(fid){
   const inp=document.getElementById(fid+'-postal');
   if(!inp)return;
@@ -5939,6 +6022,16 @@ async function _handleInputInner(raw){
     mode='menu';loading=false;sbEl.disabled=false;return;
   }
 
+  // ── HDB INFO command ──
+  if(/^(?:hdb\s*info|hdbinfo|property\s*info|block\s*info|hdb\s*data|hdb\s*property|show\s*hdb|__hdbinfo__)/i.test(raw.trim())){
+    const _hiP=parseQuery(normalizeSpeech(raw.replace(/^(?:hdb\s*info|hdbinfo|property\s*info|block\s*info|hdb\s*data|hdb\s*property|show\s*hdb)\s*/i,'')));
+    const _hiBlock=_hiP.block||ctx.block||workingCtx.blockCtx||null;
+    const _hiStreet=_hiP.street||ctx.street||workingCtx.streetCtx||convCtx.street||null;
+    const _hiTown=_hiP.town||ctx.town||workingCtx.townCtx||convCtx.town||null;
+    showHDBInfo(_hiBlock,_hiStreet,_hiTown);
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
   if(raw==='__onemap_school__'){
     window.open('https://www.onemap.gov.sg/school','_blank');
     harveyMsg(`Opening OneMap School Catchment tool, sir — draw the 1km radius around ${convCtx.town||'the school'} to find the exact eligible streets. Once you have the street name, come back and I will pull the transaction data for you.`,[{label:'SEARCH BY TOWN',val:'search'},{label:'ESTIMATE VALUATION',val:'estimate value'}]);
@@ -6004,6 +6097,13 @@ async function _handleInputInner(raw){
   }
 
   // ── BLOCK QUESTION: direct answer for block detail chips ──
+  if(raw.startsWith('__hdbinfo__')){
+    const _hiP2={};
+    raw.split('|').slice(1).forEach(p=>{const eq=p.indexOf(':');if(eq>0)_hiP2[p.slice(0,eq)]=p.slice(eq+1);});
+    showHDBInfo(_hiP2.block||null,_hiP2.street||null,null);
+    mode='menu';loading=false;sbEl.disabled=false;return;
+  }
+
   if(raw.startsWith('__blockq__')){
     const _bqP={};
     raw.split('|').slice(1).forEach(p=>{const eq=p.indexOf(':');if(eq>0)_bqP[p.slice(0,eq)]=p.slice(eq+1);});
@@ -14647,6 +14747,8 @@ s=s.replace(/\btavon\b/gi,'teban');             // STT: tavon → teban
   s=s.replace(/\blong\b/gi,'lorong');
 
   s=s.replace(/\b(?:postal\s*code?|postcode)\s*(\d{6})\b/gi,'$1');
+  // HDB info voice aliases
+  s=s.replace(/\b(?:h\.?d\.?b\.?\s*info(?:rmation)?|property\s*info(?:rmation)?|block\s*info(?:rmation)?)\b/gi,'hdb info');
   return s.trim();
 }
 
@@ -15214,6 +15316,7 @@ async function handleBlockDetail(block, street, town, ctx){
     ...(_s?[{label:`← BACK TO ${_s.split(' ').slice(0,3).join(' ')}`,val:_s}]:[]),
     ...(_streetsForBlock.length>1?[{label:'OTHER STREETS',val:`__otherstreets__|block:${_b}|town:${_t||''}`}]:[]),
     {label:'ESTIMATE VALUATION',val:'estimate value'},
+    {label:'ℹ HDB INFO',val:`__hdbinfo__|block:${_b}|street:${_s}`},
     _changeDetailsChip({block:_b,street:_s,town:_t},_s,_b,null,null),
   ];
 
